@@ -236,25 +236,36 @@ export class Autopilot {
  }
  async crawlCatalog(queue,pages,publish,academy=false){
   const seen=new Set();
+  if(academy)this.academyAudit={rootComplete:false,blocked:[]};
   while(pages.length&&seen.size<(academy?40:30)&&queue.length<100){
    await this.guard();const entry=pages.shift(),key=new URL(entry.url).pathname+(entry.button?'|'+entry.button:'');if(seen.has(key))continue;seen.add(key);
    try{
    await this.navigate(entry.url);
    if(entry.button){await this.guard();await this.api.scripting.executeScript({target:{tabId:this.tabId,frameIds:[0]},func:catalogPage,args:[{open:entry.button}]});await this.sleep(1500);const destination=await this.api.tabs.get(this.tabId);if(!isCoachURL(destination.url)||!/^\/home\/achievements\/unearned\/\d+$/.test(new URL(destination.url).pathname))throw new Error('Prestationsknappen öppnade inte en stödd sida.');this.expectedURL=destination.url;await this.navigate(destination.url);}
-   await this.inventory();
+   const inventory=await this.inventory();
+   if(academy&&new URL(entry.url).pathname===new URL(ACADEMY_URL).pathname){const p=inventory?.progress;this.academyAudit.rootComplete=!!p&&p.total>0&&p.completed===p.total;}
    const found=await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:catalogPage});
    const links=found.flatMap(f=>f.result?.links||[]);const parent=/\/home\/(?:achievements\/unearned\/\d+|collection\/[^/]+|program\/\d+\/\d+)$/.test(new URL(this.expectedURL).pathname)?this.expectedURL:null;
-   addCandidates(queue,links,parent,academy);await publish();
+   if(academy){
+    if(inventory?.progress&&inventory.progress.completed<inventory.progress.total)this.academyAudit.blocked.push((inventory.title||'Academy')+': '+inventory.progress.completed+'/'+inventory.progress.total+' slutförda.');
+    for(const link of links.filter(l=>!l.related&&!/^back$|^tillbaka$/i.test(l.title||''))){
+     if(link.locked&&!link.completed)this.academyAudit.blocked.push(link.title);
+     if(link.completed){const item=queue.find(i=>i.key===new URL(link.url).pathname);if(item){item.status='Registrerad klar';item.reason='';}}
+     if(entry.depth>=6&&!link.completed&&academyChild(link)&&!seen.has(new URL(link.url).pathname))this.academyAudit.blocked.push('Djupgräns: '+link.title);
+    }
+   }
+   addCandidates(queue,academy?links.filter(l=>!l.related):links,parent,academy);await publish();
    if(entry.depth<(academy?6:3))for(const link of links)if(link.kind!=='resource'&&!link.locked&&(academy?academyChild(link):!link.completed&&!new URL(link.url).pathname.startsWith('/home/program/7047/'))&&!seen.has(new URL(link.url).pathname+(link.button?'|'+link.button:'')))pages.push({url:link.url,button:link.button,depth:entry.depth+1});
-   }catch(e){if(e.code!=='ACCESS_DENIED')throw e;this.report('Åtkomst saknas för '+entry.url.split('?')[0]+'. Fortsätter med tillgängliga moment.');}
+   }catch(e){if(e.code!=='ACCESS_DENIED')throw e;if(academy)this.academyAudit.blocked.push('Åtkomst saknas: '+entry.url.split('?')[0]);this.report('Åtkomst saknas för '+entry.url.split('?')[0]+'. Fortsätter med tillgängliga moment.');}
   }
+  if(academy&&(pages.length||queue.length>=100))this.academyAudit.blocked.push('Inventeringens gräns nåddes.');
  }
  async discoverAndRun(){
   const [tab]=await this.api.tabs.query({active:true,currentWindow:true});if(!tab?.id||!isCoachURL(tab.url))throw new Error('Öppna Sales Coach och logga in först.');
   this.tabId=tab.id;this.expectedURL=tab.url;const queue=[];
   const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,key,status,reason,kind,academy})=>({title,key,status,reason,kind,academy})),queueUpdatedAt:Date.now()});};
   this.report('Academy först: söker igenom Apple Professional Academy och dess undersamlingar.');
-  for(let pass=0;pass<3;pass++){
+  for(let pass=0;pass<20;pass++){
    await this.crawlCatalog(queue,[{url:ACADEMY_URL,depth:0}],publish,true);
    const pending=queue.filter(i=>i.academy&&i.status==='Hittad');
    if(!pending.length)break;
@@ -264,7 +275,12 @@ export class Autopilot {
    this.report('Söker efter Academy-moment som nu kan ha låsts upp.');
   }
   const unresolved=queue.filter(i=>i.academy&&i.status!=='Registrerad klar');
-  this.report(unresolved.length?'Academy: '+unresolved.length+' hittade moment behöver kontroll. De ligger kvar i kön.':'Academys hittade öppna moment har bearbetats. Låsta nivåer kan återstå.');
+  const blockers=this.academyAudit?.blocked||[];
+  if(unresolved.length||!this.academyAudit?.rootComplete||blockers.length){
+   const reason=[unresolved.length?unresolved.length+' Academy-moment återstår.':'',...new Set(blockers),!this.academyAudit?.rootComplete?'Sales Coach har inte bekräftat alla krav på Academys programsida.':''].filter(Boolean).join(' ');
+   await publish();throw new Error('Academy behöver slutföras innan övriga resurser startas. '+reason);
+  }
+  this.report('Alla Academy-krav är verifierade som klara.');
   this.report('Söker nu efter övriga resurser under För dig.');
   await this.crawlCatalog(queue,[{url:'https://salescoach.apple.com/home/for-you',depth:0}],publish,false);
   const other=queue.filter(i=>!i.academy&&i.status==='Hittad');
@@ -272,7 +288,7 @@ export class Autopilot {
   this.report('Kön genomgången: '+queue.filter(i=>i.status==='Registrerad klar').length+' registrerade klara, '+queue.filter(i=>i.status!=='Registrerad klar').length+' behöver kontroll.');
  }
  async processQueue(queue,publish){
-  if(queue.some(i=>i.academy)&&queue.some(i=>!i.academy)){await this.processQueue(queue.filter(i=>i.academy),publish);await this.processQueue(queue.filter(i=>!i.academy),publish);return;}
+  if(queue.some(i=>i.academy)&&queue.some(i=>!i.academy))throw new Error('Academy och övriga resurser måste köras i separata, verifierade faser.');
   queue.splice(0,queue.length,...prioritizeResources(queue));const videos=[];
   for(const item of queue)if(isVideoResource(item)){item.kind='Video';item.status='Video sist';videos.push(item);}
   await publish();this.report('Prioriterar alla resurser utan video. Videor körs sist, en i taget.');

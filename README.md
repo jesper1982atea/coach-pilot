@@ -29,3 +29,7 @@ Paketbyggaren kräver macOS med Swift-kompilator. Versionsnumret finns i scripts
 Tre svenska Academy-tester för Mac, iPad och iPhone verifierades med 100 % den 11 september 2026. Exakt innehållsmatchning krävs för de lokala svarstabellerna. Övriga frågor använder experimentellt AI-stöd och kan behöva manuell granskning. Det är ingen garanti för alla material eller framtida testversioner.
 
 Källkod publiceras för insyn. Ingen separat öppen källkodslicens har valts.
+
+## Academy först (från 0.5.1)
+
+Automatisk körning stannar inom Academy tills programräknaren visar samtliga krav slutförda och inventeringen inte har kvar ouppklarade moment, låsta grenar eller åtkomstfel. En tom kö räknas inte som klar Academy. Nya upplåsningar söks efter framsteg (högst 20 omgångar); ofullständig inventering stoppar övergången. Videor körs sist inom Academy. Om något kräver hjälp visas orsaken och annat material startas inte. Detta styr ordningen och garanterar inte att piloten kan besvara varje frågetyp eller låsa upp material.
