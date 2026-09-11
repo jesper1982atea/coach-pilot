@@ -243,7 +243,7 @@ export class Autopilot {
   }
   throw new Error('Tids- eller steggränsen nåddes. Körningen är pausad.');
  }
- async crawlCatalog(queue,pages,publish,academy=false){
+ async crawlCatalog(queue,pages,publish,academy=false,immediate=false){
   const seen=new Set();
   if(academy)this.academyAudit={rootComplete:false,blocked:[]};
   while(pages.length&&seen.size<(academy?40:30)&&queue.length<100){
@@ -264,7 +264,16 @@ export class Autopilot {
      if(entry.depth>=6&&!link.completed&&academyChild(link)&&!seen.has(new URL(link.url).pathname))this.academyAudit.blocked.push('Djupgräns: '+link.title);
     }
    }
-   addCandidates(queue,academy?links.filter(l=>!l.related):links,parent,academy);await publish();
+   const candidates=academy?links.filter(l=>!l.related):links;
+   if(immediate){
+    const catalogURL=this.expectedURL;
+    for(const link of candidates){
+     addCandidates(queue,[link],parent,academy);
+     const item=queue.find(i=>i.key===new URL(link.url).pathname&&i.status==='Hittad'&&i.academy===academy);
+     if(item){await publish();this.report('Hittade ett ogjort moment: '+item.title+'. Bearbetar det innan sökningen fortsätter.');await this.processQueue([item],publish);await this.navigate(catalogURL);}
+    }
+   }else addCandidates(queue,candidates,parent,academy);
+   await publish();
    if(entry.depth<(academy?6:3))for(const link of links)if(link.kind!=='resource'&&!link.locked&&(academy?academyChild(link):!link.completed&&!new URL(link.url).pathname.startsWith('/home/program/7047/'))&&!seen.has(new URL(link.url).pathname+(link.button?'|'+link.button:'')))pages.push({url:link.url,button:link.button,depth:entry.depth+1});
    }catch(e){if(e.code!=='ACCESS_DENIED')throw e;if(academy)this.academyAudit.blocked.push('Åtkomst saknas: '+entry.url.split('?')[0]);this.report('Åtkomst saknas för '+entry.url.split('?')[0]+'. Fortsätter med tillgängliga moment.');}
   }
@@ -274,11 +283,12 @@ export class Autopilot {
   const [tab]=await this.api.tabs.query({active:true,currentWindow:true});if(!tab?.id||!isCoachURL(tab.url))throw new Error('Öppna Sales Coach och logga in först.');
   this.tabId=tab.id;this.expectedURL=tab.url;const queue=[];
   const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,key,status,reason,kind,academy,inputQuestion})=>({title,key,status,reason,kind,academy,inputQuestion})),queueUpdatedAt:Date.now()});};
-  this.report('Academy först: söker igenom Apple Professional Academy och dess undersamlingar.');
+  this.report('Academy först: söker nästa ogjorda moment och börjar direkt.');
   for(let pass=0;pass<20;pass++){
-   await this.crawlCatalog(queue,[{url:ACADEMY_URL,depth:0}],publish,true);
+   const completedBefore=queue.filter(i=>i.academy&&i.status==='Registrerad klar').length;
+   await this.crawlCatalog(queue,[{url:ACADEMY_URL,depth:0}],publish,true,true);
    const pending=queue.filter(i=>i.academy&&i.status==='Hittad');
-   if(!pending.length)break;
+   if(!pending.length){if(queue.filter(i=>i.academy&&i.status==='Registrerad klar').length>completedBefore)continue;break;}
    this.report('Prioriterar '+pending.length+' Academy-moment. Videor körs sist inom Academy.');
    await this.processQueue(pending,publish);
    if(!pending.some(i=>i.status==='Registrerad klar'))break;
@@ -292,7 +302,7 @@ export class Autopilot {
    await publish();this.report('Academy väntar: '+reason+' Fortsätter med övrigt material.');
   }else{await this.api.storage.local.set({academyNotice:''});this.report('Alla Academy-krav är verifierade som klara.');}
   this.report('Söker nu efter övriga resurser under För dig.');
-  await this.crawlCatalog(queue,[{url:'https://salescoach.apple.com/home/for-you',depth:0}],publish,false);
+  await this.crawlCatalog(queue,[{url:'https://salescoach.apple.com/home/for-you',depth:0}],publish,false,true);
   const other=queue.filter(i=>!i.academy&&i.status==='Hittad');
   await this.processQueue(other,publish);
   this.report('Kön genomgången: '+queue.filter(i=>i.status==='Registrerad klar').length+' registrerade klara, '+queue.filter(i=>i.status!=='Registrerad klar').length+' behöver kontroll.');

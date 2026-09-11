@@ -33,3 +33,7 @@ Källkod publiceras för insyn. Ingen separat öppen källkodslicens har valts.
 ## Academy först (från 0.5.4)
 
 Piloten försöker Academy först och söker nya upplåsningar efter framsteg. När Academy inte kan slutföras fortsätter den med övrigt under För dig. Ett bestående besked visar återstående låsningar och krav utan att markera Academy som klar. Nästa automatiska sökning försöker Academy på nytt. Personliga uppgifter efterfrågas i panelen och skickas in manuellt i Sales Coach.
+
+## Börja direkt (från 0.5.6)
+
+Piloten bygger inte längre en fullständig inventering innan arbetet börjar. När ett ogjort moment hittas bearbetas det och slutförandet kontrolleras innan sökningen fortsätter. Academy försöks först. Även video körs direkt när momentet hittas; ett misslyckat eller personligt moment lämnas för uppföljning och provas inte om i samma körning. Antalet hittade moment växer under körningen och är inte hela webbplatsens total.
