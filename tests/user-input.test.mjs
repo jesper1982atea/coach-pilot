@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {inputRequest} from '../src/user-input.js';
+test('A delayed customer form asks for personal input before controls load',()=>{assert.match(inputRequest([],'Årets lyckade exempel – formulär').question,/verklig kundaffär/);});
+test('Personal radio question requires user input even without free text',()=>{assert.ok(inputRequest([{result:{questions:[{prompt:'Tänk på en lyckad försäljning som du gjorde under året.'}]}}]));});
+test('Ordinary product knowledge quiz does not request personal input',()=>{assert.equal(inputRequest([{result:{questions:[{prompt:'Vilka fördelar ger Mac kunden?'}]}}],'Kunskapstest'),null);});
+test('Late free text is detected in any frame',()=>{assert.ok(inputRequest([{result:{}},{result:{freeText:true}}]));});
+import {Autopilot} from '../src/autopilot.js';
+test('Queue marks personal work without invoking AI or submitting',async()=>{const p=new Autopilot({api:{},report:()=>{}});p.guard=async()=>{};p.navigate=async()=>{};p.inventory=async()=>({});p.frames=async()=>[{result:{lesson:'Introduktion'}}];p.resource=async()=>{throw new Error('Must not submit');};const item={title:'Årets lyckade exempel – formulär',academy:true,url:'https://salescoach.apple.com/home/content/view/502241',key:'/home/content/view/502241',parents:[]};await p.processQueue([item],async()=>{});assert.equal(item.status,'Behöver dina uppgifter');assert.match(item.inputQuestion,/kundaffär/);});

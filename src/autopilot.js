@@ -1,3 +1,4 @@
+import {inputRequest} from './user-input.js';
 import {matchKnownTest} from './known-tests.js';
 import {KNOWN_TESTS} from './known-tests-data.js';
 import {accessDialog,followVisibleLink} from './navigation.js';
@@ -217,7 +218,7 @@ export class Autopilot {
    if(all.some(s=>s.score===100)){this.report('Sales Coach visar 100 procent på kunskapstestet.');return 'passed';}
    if(all.some(s=>s.score!=null))throw new Error('Sales Coach visar '+all.find(s=>s.score!=null).score+' procent. Testet behöver granskas.');
    if(all.some(s=>s.failed))throw new Error('Sales Coach visar fel svar. Autopiloten har pausats.');
-   if(all.some(s=>s.freeText))throw new Error('Formuläret innehåller fritextfrågor som behöver dina uppgifter.');
+   const request=inputRequest(frames);if(request){const e=new Error(request.reason);e.code='USER_INPUT_REQUIRED';e.request=request;throw e;}
    const question=frames.find(f=>f.result.options.length>0&&!f.result.passed);
    // Accumulate lesson paragraphs, excluding frames displaying answer choices.
    for(const f of frames)this.context=(this.context+'\n'+f.result.lesson).split('\n').filter((s,i,a)=>s&&a.indexOf(s)===i).join('\n').slice(-100000);
@@ -265,7 +266,7 @@ export class Autopilot {
  async discoverAndRun(){
   const [tab]=await this.api.tabs.query({active:true,currentWindow:true});if(!tab?.id||!isCoachURL(tab.url))throw new Error('Öppna Sales Coach och logga in först.');
   this.tabId=tab.id;this.expectedURL=tab.url;const queue=[];
-  const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,key,status,reason,kind,academy})=>({title,key,status,reason,kind,academy})),queueUpdatedAt:Date.now()});};
+  const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,key,status,reason,kind,academy,inputQuestion})=>({title,key,status,reason,kind,academy,inputQuestion})),queueUpdatedAt:Date.now()});};
   this.report('Academy först: söker igenom Apple Professional Academy och dess undersamlingar.');
   for(let pass=0;pass<20;pass++){
    await this.crawlCatalog(queue,[{url:ACADEMY_URL,depth:0}],publish,true);
@@ -300,6 +301,7 @@ export class Autopilot {
    try{
     await this.navigate(item.url);await this.inventory();const frames=await this.frames();
     if(!videoPhase&&frames.some(f=>f.result.video)){await defer(frames);await publish();return;}
+    const request=inputRequest(frames,item.title);if(request){item.status='Behöver dina uppgifter';item.inputQuestion=request.question;item.reason=request.reason;this.report(item.title+': '+request.question);await publish();return;}
     const capability=classifyCourse(frames,item.title);
     if(!capability.supported){item.status='Behöver hjälp';item.reason=capability.reason;this.report('Hoppar över '+item.title+': '+item.reason);await publish();return;}
     item.kind=capability.kind;item.status='Kör';item.reason='';await publish();this.report('Kör '+capability.kind.toLowerCase()+': '+item.title);
@@ -308,7 +310,7 @@ export class Autopilot {
     let verified=false;
     for(const parent of item.parents){await this.navigate(parent);const p=await this.inventory();if(p.earned||p.items.some(i=>new URL(i.url).pathname===item.key&&i.completed)){verified=true;break;}}
     item.status=verified?'Registrerad klar':'Ej verifierad';item.reason=verified?'':'Bearbetad, men Sales Coach har inte bekräftat slutförande.';this.report(item.title+': '+item.status);
-   }catch(e){await this.guard();item.status=e.code==='ACCESS_DENIED'?'Åtkomst saknas':'Behöver hjälp';item.reason=e.message;this.report('Går vidare från '+item.title+': '+e.message);}
+   }catch(e){await this.guard();item.status=e.code==='USER_INPUT_REQUIRED'?'Behöver dina uppgifter':e.code==='ACCESS_DENIED'?'Åtkomst saknas':'Behöver hjälp';if(e.request)item.inputQuestion=e.request.question;item.reason=e.message;this.report('Går vidare från '+item.title+': '+e.message);}
    await publish();
   };
   for(const item of [...queue])if(!videos.includes(item))await execute(item,false);
