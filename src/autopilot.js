@@ -217,6 +217,7 @@ export class Autopilot {
    if(all.some(s=>s.score===100)){this.report('Sales Coach visar 100 procent på kunskapstestet.');return 'passed';}
    if(all.some(s=>s.score!=null))throw new Error('Sales Coach visar '+all.find(s=>s.score!=null).score+' procent. Testet behöver granskas.');
    if(all.some(s=>s.failed))throw new Error('Sales Coach visar fel svar. Autopiloten har pausats.');
+   if(all.some(s=>s.freeText))throw new Error('Formuläret innehåller fritextfrågor som behöver dina uppgifter.');
    const question=frames.find(f=>f.result.options.length>0&&!f.result.passed);
    // Accumulate lesson paragraphs, excluding frames displaying answer choices.
    for(const f of frames)this.context=(this.context+'\n'+f.result.lesson).split('\n').filter((s,i,a)=>s&&a.indexOf(s)===i).join('\n').slice(-100000);
@@ -245,6 +246,7 @@ export class Autopilot {
    const inventory=await this.inventory();
    if(academy&&new URL(entry.url).pathname===new URL(ACADEMY_URL).pathname){const p=inventory?.progress;this.academyAudit.rootComplete=!!p&&p.total>0&&p.completed===p.total;}
    const found=await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:catalogPage});
+   if(academy)this.academyAudit.blocked.push(...found.flatMap(f=>f.result?.lockedItems||[]));
    const links=found.flatMap(f=>f.result?.links||[]);const parent=/\/home\/(?:achievements\/unearned\/\d+|collection\/[^/]+|program\/\d+\/\d+)$/.test(new URL(this.expectedURL).pathname)?this.expectedURL:null;
    if(academy){
     if(inventory?.progress&&inventory.progress.completed<inventory.progress.total)this.academyAudit.blocked.push((inventory.title||'Academy')+': '+inventory.progress.completed+'/'+inventory.progress.total+' slutförda.');
@@ -298,7 +300,7 @@ export class Autopilot {
    try{
     await this.navigate(item.url);await this.inventory();const frames=await this.frames();
     if(!videoPhase&&frames.some(f=>f.result.video)){await defer(frames);await publish();return;}
-    const capability=classifyCourse(frames);
+    const capability=classifyCourse(frames,item.title);
     if(!capability.supported){item.status='Behöver hjälp';item.reason=capability.reason;this.report('Hoppar över '+item.title+': '+item.reason);await publish();return;}
     item.kind=capability.kind;item.status='Kör';item.reason='';await publish();this.report('Kör '+capability.kind.toLowerCase()+': '+item.title);
     this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(item.title);this.testParents=item.parents;const result=await this.resource({deferVideos:!videoPhase});

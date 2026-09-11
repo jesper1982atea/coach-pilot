@@ -17,9 +17,11 @@ export function catalogPage(command={}) {
  const titleOf=b=>clean(b.getAttribute('aria-label')||b.innerText||b.textContent);
  if(command.open){const matches=buttons.filter(b=>titleOf(b)===command.open);if(matches.length!==1)throw new Error('Prestationsknappen saknas eller är otydlig.');matches[0].click();return {opened:true};}
  for(const b of buttons)links.push({url:location.href,title:titleOf(b),kind:'badgeButton',button:titleOf(b)});
- return {url:location.href,links};
+ const lockedItems=[...document.querySelectorAll('a:not([href]),[role="link"]:not([href])')].filter(visible).filter(e=>e.getAttribute('aria-disabled')==='true'||e.querySelector('[aria-label*="locked" i],[alt*="locked" i]')).map(e=>clean(e.getAttribute('aria-label')||e.textContent)).filter(Boolean);
+ return {url:location.href,links,lockedItems};
 }
-export function classifyCourse(frames) {
+export function classifyCourse(frames,title='') {
+ if(/formulär|survey|enkät/i.test(title))return {supported:false,reason:'Formulär kräver egna uppgifter och fritextsvar. Öppna och fyll i formuläret manuellt.'};
  const states=frames.map(f=>f.result).filter(Boolean);
  if(!states.length)return {supported:false,reason:'Inget åtkomligt kursinnehåll'};
  if(states.some(s=>s.freeText||(s.groups>1&&!s.questions?.length)))return {supported:false,reason:'Fritext eller otydligt grupperade frågor'};
