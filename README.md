@@ -49,3 +49,7 @@ Långa workshopkurser på `/home/course/...` räknas nu som krav och visas i kö
 ## Testomförsök (från 0.5.9)
 
 Piloten känner igen Sales Coach-resultat som **33 % – Gå igenom dina svar och försök igen**. Ett underkänt test granskas mot kursmaterialet och kan försökas igen högst fyra gånger. Samma underkända svarskombination skickas aldrig in två gånger. Implementeringsresan för Mac (`475822`) har en innehållsmatchad svarstabell som verifierades med 100 % den 11 september 2026.
+
+## Bekräftad kursgenomgång (från 0.6.0)
+
+På interaktiva kurssidor öppnar piloten alla avsnitt och går igenom relevanta flikar, kort och **Visa mer**-kontroller. Navigations-, meny-, nedladdnings- och mediakontroller ingår inte i den generella klickningen. Piloten känner igen **100 %**, tydliga slutförandebesked och **intjänade erfarenhetspoäng** som direkta bevis på att Sales Coach har godkänt momentet. Samlingens registrerade status kontrolleras fortfarande innan momentet markeras som klart i kön.

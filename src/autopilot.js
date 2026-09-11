@@ -50,12 +50,20 @@ export function courseFrame(command = {}) {
  const prompt=questions[0]?.prompt||'',multi=questions[0]?.multi||false;
  const groups=questions.length;
  const fingerprint=JSON.stringify(questions.map(q=>[q.prompt,q.options.map(o=>o.text),q.multi,q.requiredCount]));
- const buttons=[...root.querySelectorAll('button,[role="button"],input[type="submit"]')].filter(visible);
+ const buttons=[...root.querySelectorAll('button,[role="button"],[role="tab"],input[type="submit"]')].filter(visible);
  const enabled=e=>!e.matches(':disabled')&&!e.closest('[aria-disabled="true"]');
  const submit=buttons.filter(e=>/^(skicka(?: in)?(?: svar(?:et|en)?)?|svara|kontrollera(?: svar(?:et|en)?)?|submit(?: answer)?|check(?: answer)?)$/i.test(label(e)));
  const retry=buttons.filter(e=>/^(försök igen|prova igen|gör om|try again|retry)$/i.test(label(e)));
  const next=buttons.filter(e=>/^(nästa(?: fråga|avsnitt|sida)?|fortsätt|gå vidare|next(?: question|section)?|continue|starta (?:kunskapskontroll|quiz|prov)|start (?:quiz|test)|börja)$/i.test(label(e)));
  const sections=buttons.filter(e=>e.getAttribute('aria-expanded')==='false'&&e.closest('h2,h3,h4,[role="heading"]')&&!/skicka|submit|prov|quiz|test/i.test(label(e)));
+ const reserved=new Set([...submit,...retry,...next,...sections]);
+ const embeddedCourse=location.hostname==='seeddownload.cdn-apple.com';
+ const interactions=buttons.filter(e=>enabled(e)&&!reserved.has(e)&&(
+  (embeddedCourse&&label(e))||
+  e.getAttribute('aria-expanded')==='false'||
+  (e.getAttribute('role')==='tab'&&e.getAttribute('aria-selected')!=='true')||
+  /^(visa|läs|vänd|reveal|show|learn)\b/i.test(label(e))
+ )&&!/spela|play|paus|pause|ljud|mute|volym|volume|undertext|caption|inställningar|settings|bild-i-bild|picture.in.picture|helskärm|fullscreen|stäng|close|bakåt|back|åtgärder|actions|meny|menu|profil|profile|dela|share|ladda ner|download|tillåt kursramar|stoppa/i.test(label(e)));
  const lesson=[...root.querySelectorAll('h1,h2,h3,h4,p,li,td,th,blockquote,a')].filter(e=>visible(e)&&(!choices.length||!containers.some(c=>c.contains(e)))).map(label).filter(Boolean).join('\n').slice(0,40000);
  const text=[...root.querySelectorAll('h1,h2,h3,h4,p,li,[role="alert"]')].filter(visible).map(label).filter(Boolean).join('\n').slice(0,40000);
  const feedback=[...root.querySelectorAll('[role="alert"],.feedback,[class*="feedback"],[class*="Feedback"]')].filter(visible).map(label).join(' ');
@@ -64,10 +72,15 @@ export function courseFrame(command = {}) {
  const resultMatch=clean(root.innerText||root.textContent).match(/(\d{1,3})\s*%?\s*(?:Bra jobbat|Du är inte godkänd|Gå igenom dina svar|Du fick|Du har|Grattis|You)/i);
  const resultLocked=options.length&&(options.every(o=>o.disabled)||retry.some(enabled)||!submit.some(enabled));
  const score=resultMatch&&resultLocked?Number(resultMatch[1]):null;
- const complete=score===100||/^(grattis[!.]?|du (?:har )?slutfört.*|du är klar[!.]?|congratulations[!.]?|course complete[!.]?)$/im.test(text);
+ const ariaSignals=[...root.querySelectorAll('[aria-label]')].filter(visible).map(e=>clean(e.getAttribute('aria-label'))).filter(s=>/XP|ERFARENHETSPOÄNG|EXPERIENCE POINTS/i.test(s));
+ const currentTitle=clean(document.title).split('|')[0].trim().toLocaleLowerCase('sv');
+ const rewardSignals=(ariaSignals.length?ariaSignals:[feedback]).filter(signal=>{const named=signal.match(/["\u201c]([^"\u201d]+)["\u201d]/);return !named||!currentTitle||currentTitle.includes(clean(named[1]).toLocaleLowerCase('sv'));});
+ const xp=rewardSignals.reduce((sum,signal)=>sum+[...signal.matchAll(/(?:\+(\d+)\s*(?:XP|INTJÄNADE ERFARENHETSPOÄNG)|(?:earned|intjänade)\s+(\d+)\s*(?:experience points|erfarenhetspoäng|XP))/gi)].reduce((n,m)=>n+Number(m[1]||m[2]||0),0),0);
+ const success=score===100||/^(?:full pott|bra jobbat|success|successful|slutfört|slutfördes|completed|course complete)[!.]?$/im.test(text);
+ const complete=xp>0||success||/^(grattis[!.]?|du (?:har )?slutfört.*|du är klar[!.]?|congratulations[!.]?|course complete[!.]?)$/im.test(text);
  const video=[...root.querySelectorAll('video')].find(visible);
  const freeText=[...root.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].some(visible);
- const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,submit:submit.length===1&&enabled(submit[0]),retry:retry.length===1&&enabled(retry[0]),next:next.filter(enabled).map(label),sections:sections.filter(enabled).map(label),failed,passed,complete,score,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
+ const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,submit:submit.length===1&&enabled(submit[0]),retry:retry.length===1&&enabled(retry[0]),next:next.filter(enabled).map(label),sections:sections.filter(enabled).map(label),interactions:interactions.map((e,id)=>({id:id+1,text:label(e)})),failed,passed,complete,success,xp,score,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
  if(!command.action)return state;
  if(command.url!==location.href||command.fingerprint!==fingerprint)throw new Error('Sidan ändrades före åtgärden.');
  const click=e=>{if(!e||!enabled(e))throw new Error('Kontrollen är inte tillgänglig.');e.scrollIntoView({block:'center'});e.click();return {acted:true};};
@@ -86,6 +99,7 @@ export function courseFrame(command = {}) {
  }
  if(command.action==='next'){const candidates=next.filter(e=>enabled(e)&&label(e)===command.text);if(candidates.length!==1)throw new Error('Nästa steg är otydligt.');return click(candidates[0]);}
  if(command.action==='expand'){const candidates=sections.filter(e=>enabled(e)&&label(e)===command.text);if(candidates.length!==1)throw new Error('Läsavsnittet är otydligt.');return click(candidates[0]);}
+ if(command.action==='interact'){const candidate=interactions[command.id-1];if(!candidate||label(candidate)!==command.text)throw new Error('Interaktionen ändrades.');return click(candidate);}
  if(command.action==='pauseVideo'){if(video)video.pause();return {acted:!!video};}
  if(command.action==='play'){if(!video)throw new Error('Videon försvann.');video.playbackRate=1;return video.play().then(()=>({acted:true}));}
  throw new Error('Okänd åtgärd.');
@@ -234,11 +248,12 @@ export class Autopilot {
   this.report('Hela kunskapstestet inskickat. Kontrollerar återkopplingen.');
  }
  async resource({deferVideos=false}={}){
-  const started=Date.now();let idle=0,steps=0,prepared=false,submissionWait=0,videoTrack=null,playAttempts=0;const expanded=new Set(),navigation=new Map();
+  const started=Date.now();let idle=0,steps=0,prepared=false,submissionWait=0,videoTrack=null,playAttempts=0;const expanded=new Set(),interacted=new Set(),navigation=new Map();
   while(Date.now()-started<30*60*1000&&steps++<1200){
    const frames=await this.frames();const all=frames.map(f=>f.result);
    if(deferVideos&&all.some(s=>s.video)){for(const f of frames)if(f.result.video&&!f.result.video.ended)await this.act(f,'pauseVideo');return 'deferred-video';}
    if(all.some(s=>s.score===100)){this.report('Sales Coach visar 100 procent på kunskapstestet.');return 'passed';}
+   const rewarded=all.find(s=>s.xp>0||s.success);if(rewarded){this.report(rewarded.xp>0?'Sales Coach bekräftar '+rewarded.xp+' intjänade erfarenhetspoäng.':'Sales Coach visar att momentet är slutfört.');return 'passed';}
    const result=frames.find(f=>f.result.score!=null&&f.result.score<100);
    if(result){
     const key=this.expectedURL+'|'+result.result.fingerprint,ids=result.result.options.filter(o=>o.selected).map(o=>o.id).sort((a,b)=>a-b),attempts=this.failedAttempts.get(key)||[];
@@ -267,10 +282,13 @@ export class Autopilot {
    }
    const section=frames.find(f=>f.result.sections.some(t=>!expanded.has(f.frameId+'|'+t)));
    if(section){const title=section.result.sections.find(t=>!expanded.has(section.frameId+'|'+t));expanded.add(section.frameId+'|'+title);this.report('Öppnar och läser avsnitt: '+title);await this.act(section,'expand',{text:title});this.onStatus({phase:'Läser avsnittet: '+title,heartbeat:Date.now(),media:null});await this.sleep(3000);idle=0;continue;}
+   const interactive=frames.find(f=>(f.result.interactions||[]).some(i=>!interacted.has(f.frameId+'|'+i.text)));
+   if(interactive){const item=interactive.result.interactions.find(i=>!interacted.has(interactive.frameId+'|'+i.text));interacted.add(interactive.frameId+'|'+item.text);this.report('Aktiverar kursmoment: '+item.text);this.onStatus({phase:'Går igenom interaktivt innehåll: '+item.text,heartbeat:Date.now(),media:null});await this.act(interactive,'interact',item);await this.sleep(1200);idle=0;continue;}
    const next=frames.find(f=>f.result.next.length===1);
    if(next){const key=next.frameId+'|'+next.result.text+'|'+next.result.next[0];const count=(navigation.get(key)||0)+1;navigation.set(key,count);if(count>2)throw new Error('Nästa-knappen ändrar inte sidan. Körningen är pausad.');this.report('Går vidare: '+next.result.next[0]);await this.act(next,'next',{text:next.result.next[0]});idle=0;continue;}
    if(all.some(s=>s.complete))return;
-   if(++idle>=(this.expectTest&&!prepared?30:4)){if(this.expectTest&&!prepared)throw new Error('Testets frågor laddades inte. Inget resultat registrerades.');if(all.some(s=>s.options.length))throw new Error('Frågan saknar en tydlig nästa-knapp.');return;}
+   const idleLimit=this.expectTest&&!prepared?30:(interacted.size||expanded.size||videoTrack?12:4);
+   if(++idle>=idleLimit){if(this.expectTest&&!prepared)throw new Error('Testets frågor laddades inte. Inget resultat registrerades.');if(all.some(s=>s.options.length))throw new Error('Frågan saknar en tydlig nästa-knapp.');return;}
    await this.sleep(1500);
   }
   throw new Error('Tids- eller steggränsen nåddes. Körningen är pausad.');
