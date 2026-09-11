@@ -53,3 +53,7 @@ Piloten känner igen Sales Coach-resultat som **33 % – Gå igenom dina svar oc
 ## Bekräftad kursgenomgång (från 0.6.0)
 
 På interaktiva kurssidor öppnar piloten alla avsnitt och går igenom relevanta flikar, kort och **Visa mer**-kontroller. Navigations-, meny-, nedladdnings- och mediakontroller ingår inte i den generella klickningen. Piloten känner igen **100 %**, tydliga slutförandebesked och **intjänade erfarenhetspoäng** som direkta bevis på att Sales Coach har godkänt momentet. Samlingens registrerade status kontrolleras fortfarande innan momentet markeras som klart i kön.
+
+## Rulla hela kursen (från 0.6.1)
+
+Piloten rullar stegvis genom både sidan och inre rullbara kursytor. Nya och nästlade avsnitt som visas efter ett klick bearbetas rekursivt. Flera interna **Nästa/Fortsätt**-kontroller kan följas en i taget genom kursens undersidor. Efter bottenläget och undersidorna väntar piloten på XP eller success och kontrollerar sedan samlingens registrering. Utan någon av dessa bekräftelser visas momentet som **Ej verifierad**, aldrig som klart.
