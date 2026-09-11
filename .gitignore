@@ -1,0 +1,11 @@
+node_modules/
+dist/
+native/bin/
+.swift-cache/
+build/
+work/
+.DS_Store
+*.pem
+.env*
+node_modules
+.swift-cache

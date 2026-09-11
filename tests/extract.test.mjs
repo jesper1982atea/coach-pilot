@@ -1,0 +1,17 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {JSDOM} from 'jsdom';
+import {extractPage,mergeFrames,relevantContext,isCoachURL,expandReadSection} from '../src/extract.js';
+function page(html,url='https://salescoach.apple.com/home/achievements/unearned/29594'){
+ const dom=new JSDOM(html,{url});global.document=dom.window.document;global.location=dom.window.location;global.getComputedStyle=dom.window.getComputedStyle;dom.window.HTMLElement.prototype.getClientRects=function(){return this.hidden?[]:[{}]};dom.window.HTMLElement.prototype.scrollIntoView=function(){};return dom;
+}
+test('Inventory accepts only Sales Coach resources and preserves completion state',()=>{
+ page('<main><h1>Fälttjänster</h1><a href="/home/content/view/12" aria-label="Content Klar resurs 3 minutes, completed">Klar resurs</a><a href="/home/content/view/13" aria-disabled="true">Låst</a><a href="https://evil.example/home/content/view/14">Extern</a><a href="javascript:alert(1)">Kod</a></main>');
+ const r=extractPage();assert.equal(r.items.length,2);assert.equal(r.items[0].completed,true);assert.equal(r.items[0].title,'Klar resurs');assert.equal(r.items[1].locked,true);assert.equal(r.earned,false);
+});
+test('Learning text excludes entered personal values and hidden paragraphs',()=>{
+ page('<main><h1>Kurs</h1><p>Synligt underlag</p><p hidden>Hemligt</p><textarea>Privat svar</textarea><input value="lösenord"></main>');const r=extractPage();assert.match(r.text,/Synligt/);assert.doesNotMatch(r.text,/Hemligt|Privat|lösenord/);
+});
+test('Completion requires badge date and no outstanding links',()=>{page('<main><h1>Märke</h1><time>10 sep. 2026</time></main>');assert.equal(extractPage().earned,true);});
+test('Frame merge keeps page identity, deduplicates resources and includes lesson text',()=>{const top={title:'Märke',url:'https://salescoach.apple.com/home/achievements/unearned/1',text:'Top',items:[{url:'https://salescoach.apple.com/home/content/view/1?a=1'}]};const child={text:'Kursunderlag',items:[{url:'https://salescoach.apple.com/home/content/view/1?a=2'}]};const r=mergeFrames([{frameId:2,result:child},{frameId:0,result:top}]);assert.equal(r.title,'Märke');assert.equal(r.items.length,1);assert.match(r.text,/Kursunderlag/);assert.equal(r.frameCount,2);});
+test('Context selection prioritizes evidence near question terms and obeys length limit',()=>{const text='irrelevant '.repeat(500)+'\nMDM hanterar organisationens enheter.\nApple Pencil ger precision.';const selected=relevantContext(text,'Vad gör MDM?',100);assert.match(selected,/MDM hanterar/);assert.ok(selected.length<=100);});
+test('Read navigation never clicks submit, quiz, disabled or expanded controls',()=>{page('<h3><button>Skicka svar</button></h3><h3><button>Starta prov</button></h3><h3><button aria-expanded="true">Öppet</button></h3><h3><button disabled>Ej tillgänglig</button></h3><h3><button id="read">Nätverk</button></h3>');let clicked=0;document.getElementById('read').onclick=()=>clicked++;assert.equal(expandReadSection().opened,true);assert.equal(clicked,1);assert.equal(expandReadSection().opened,false);});
+test('Navigation rejects lookalike sites and javascript',()=>{assert.equal(isCoachURL('https://salescoach.apple.com/home/for-you'),true);for(const url of ['javascript:alert(1)','https://salescoach.apple.com.evil.org/home/for-you','http://salescoach.apple.com/home/for-you','https://salescoach.apple.com/logout'])assert.equal(isCoachURL(url),false);});
