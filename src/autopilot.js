@@ -1,3 +1,4 @@
+import {trackVideo} from './run-progress.js';
 import {inputRequest} from './user-input.js';
 import {matchKnownTest} from './known-tests.js';
 import {KNOWN_TESTS} from './known-tests-data.js';
@@ -98,7 +99,7 @@ export function validateAnswer(raw,state,context){
 }
 
 export class Autopilot {
- constructor({api,native,report,onPage,onQueue,wait=ms=>new Promise(r=>setTimeout(r,ms))}){Object.assign(this,{api,native,report,onPage,onQueue,wait});this.stopped=false;this.submitted=new Set();this.context='';}
+ constructor({api,native,report,onPage,onQueue,onStatus=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms))}){Object.assign(this,{api,native,report,onPage,onQueue,onStatus,wait});this.stopped=false;this.submitted=new Set();this.context='';}
  stop(){this.stopped=true;}
  async checkAccess(){
   const t=await this.api.tabs.get(this.tabId);if(this.stopped||!t.active||!isCoachURL(t.url))return;
@@ -107,7 +108,7 @@ export class Autopilot {
  }
  async guard(){if(this.stopped)throw new Error('Stoppad av dig.');const t=await this.api.tabs.get(this.tabId);if(!t.active||!isCoachURL(t.url))throw new Error('Pausad eftersom du bytte flik eller sida.');if(new URL(t.url).pathname!==new URL(this.expectedURL).pathname){await this.checkAccess();throw new Error('Pausad eftersom du bytte flik eller sida.');}this.expectedURL=t.url;}
  async sleep(ms){for(let n=0;n<ms;n+=250){if(this.stopped)throw new Error('Stoppad av dig.');await this.wait(Math.min(250,ms-n));}}
- async frames(){await this.guard();await this.checkAccess();return(await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:courseFrame})).filter(f=>f.result);}
+ async frames(){await this.guard();await this.checkAccess();const frames=(await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:courseFrame})).filter(f=>f.result);this.onStatus({heartbeat:Date.now()});return frames;}
  async act(frame,action,extra={}){await this.guard();await this.api.scripting.executeScript({target:frame.documentId?{tabId:this.tabId,documentIds:[frame.documentId]}:{tabId:this.tabId,frameIds:[frame.frameId]},func:courseFrame,args:[{action,url:frame.result.url,fingerprint:frame.result.fingerprint,...extra}]});await this.sleep(800);}
  async inventory(){await this.guard();const r=await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:extractPage});const p=mergeFrames(r);this.onPage(p);return p;}
  async navigate(url){
@@ -211,7 +212,7 @@ export class Autopilot {
   this.report('Hela kunskapstestet inskickat. Kontrollerar återkopplingen.');
  }
  async resource({deferVideos=false}={}){
-  const started=Date.now();let idle=0,steps=0,prepared=false,submissionWait=0;const expanded=new Set(),navigation=new Map();
+  const started=Date.now();let idle=0,steps=0,prepared=false,submissionWait=0,videoTrack=null,playAttempts=0;const expanded=new Set(),navigation=new Map();
   while(Date.now()-started<30*60*1000&&steps++<1200){
    const frames=await this.frames();const all=frames.map(f=>f.result);
    if(deferVideos&&all.some(s=>s.video)){for(const f of frames)if(f.result.video&&!f.result.video.ended)await this.act(f,'pauseVideo');return 'deferred-video';}
@@ -222,10 +223,16 @@ export class Autopilot {
    const question=frames.find(f=>f.result.options.length>0&&!f.result.passed);
    // Accumulate lesson paragraphs, excluding frames displaying answer choices.
    for(const f of frames)this.context=(this.context+'\n'+f.result.lesson).split('\n').filter((s,i,a)=>s&&a.indexOf(s)===i).join('\n').slice(-100000);
-   if(question){if(this.submitted.has(this.expectedURL+'|'+question.result.fingerprint)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180)throw new Error('Sales Coach har inte lämnat testresultat efter inskickningen.');await this.sleep(500);continue;}if(question.result.groups>1&&!prepared){const known=await matchKnownTest(question.result,this.expectedURL);if(known)this.testParents=[known.parent];else await this.prepareTest();prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
+   if(question){if(this.submitted.has(this.expectedURL+'|'+question.result.fingerprint)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180)throw new Error('Sales Coach har inte lämnat testresultat efter inskickningen.');this.onStatus({phase:'Väntar på testresultat från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}if(question.result.groups>1&&!prepared){const known=await matchKnownTest(question.result,this.expectedURL);if(known)this.testParents=[known.parent];else await this.prepareTest();prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
    if(all.some(s=>s.freeText))throw new Error('En fritextfråga behöver ditt svar.');
    const video=frames.find(f=>f.result.video&&!f.result.video.ended);
-   if(video){if(video.result.video.paused){this.report('Spelar kursvideon i normal hastighet.');await this.act(video,'play');}await this.sleep(2000);idle=0;continue;}
+   if(video){
+    const v=video.result.video;videoTrack=trackVideo(videoTrack,v,Date.now());
+    this.onStatus({phase:v.paused?'Väntar på videospelaren':'Spelar video',media:{time:v.time,duration:v.duration},heartbeat:Date.now()});
+    if(videoTrack.stalled)throw new Error('Videon har inte gått framåt på 30 sekunder. Starta den med Spela upp video i Sales Coach och kör momentet igen.');
+    if(v.paused&&playAttempts<2){playAttempts++;this.report('Försöker starta videon ('+playAttempts+'/2).');await this.act(video,'play');}
+    await this.sleep(2000);idle=0;continue;
+   }
    const section=frames.find(f=>f.result.sections.some(t=>!expanded.has(f.frameId+'|'+t)));
    if(section){const title=section.result.sections.find(t=>!expanded.has(section.frameId+'|'+t));expanded.add(section.frameId+'|'+title);this.report('Öppnar läsavsnitt: '+title);await this.act(section,'expand',{text:title});idle=0;continue;}
    const next=frames.find(f=>f.result.next.length===1);
