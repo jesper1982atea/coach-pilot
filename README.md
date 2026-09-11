@@ -41,3 +41,7 @@ Piloten bygger inte längre en fullständig inventering innan arbetet börjar. N
 ## Stabilare körning (från 0.5.7)
 
 Tillfälligt utbytta Sales Coach-ramar återansluts automatiskt och avbryter inte längre hela sökningen. Efter läsning eller inskickat test kontrolleras samlingen flera gånger eftersom registreringen kan dröja. Om Edge kräver ett användarklick för video visas **Behöver ett klick** med en knapp som öppnar rätt video; tryck Play och starta sedan autopiloten igen.
+
+## Kompletta specialistmärken (från 0.5.8)
+
+Långa workshopkurser på `/home/course/...` räknas nu som krav och visas i kön. Eventkurser som kräver en särskild inbjudan markeras **Åtkomst saknas** med Sales Coach-orsaken. Interaktiva läsavsnitt får längre lästid mellan öppningarna så att Sales Coach hinner registrera dem.

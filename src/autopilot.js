@@ -244,7 +244,7 @@ export class Autopilot {
     await this.sleep(2000);idle=0;continue;
    }
    const section=frames.find(f=>f.result.sections.some(t=>!expanded.has(f.frameId+'|'+t)));
-   if(section){const title=section.result.sections.find(t=>!expanded.has(section.frameId+'|'+t));expanded.add(section.frameId+'|'+title);this.report('Öppnar läsavsnitt: '+title);await this.act(section,'expand',{text:title});idle=0;continue;}
+   if(section){const title=section.result.sections.find(t=>!expanded.has(section.frameId+'|'+t));expanded.add(section.frameId+'|'+title);this.report('Öppnar och läser avsnitt: '+title);await this.act(section,'expand',{text:title});this.onStatus({phase:'Läser avsnittet: '+title,heartbeat:Date.now(),media:null});await this.sleep(3000);idle=0;continue;}
    const next=frames.find(f=>f.result.next.length===1);
    if(next){const key=next.frameId+'|'+next.result.text+'|'+next.result.next[0];const count=(navigation.get(key)||0)+1;navigation.set(key,count);if(count>2)throw new Error('Nästa-knappen ändrar inte sidan. Körningen är pausad.');this.report('Går vidare: '+next.result.next[0]);await this.act(next,'next',{text:next.result.next[0]});idle=0;continue;}
    if(all.some(s=>s.complete))return;
@@ -295,7 +295,7 @@ export class Autopilot {
  }
  async discoverAndRun(){
   const [tab]=await this.api.tabs.query({active:true,currentWindow:true});if(!tab?.id||!isCoachURL(tab.url))throw new Error('Öppna Sales Coach och logga in först.');
-  this.tabId=tab.id;this.expectedURL=tab.url;const queue=[];
+  this.tabId=tab.id;this.expectedURL=tab.url;const queue=[];const selectedCatalog=/^\/home\/collection\/[^/]+$/.test(new URL(tab.url).pathname)?tab.url:null;
   const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,url,key,status,reason,kind,academy,inputQuestion})=>({title,url,key,status,reason,kind,academy,inputQuestion})),queueUpdatedAt:Date.now()});};
   this.report('Academy först: söker nästa ogjorda moment och börjar direkt.');
   for(let pass=0;pass<20;pass++){
@@ -315,6 +315,7 @@ export class Autopilot {
    await this.api.storage.local.set({academyNotice:'Academy väntar: '+reason});
    await publish();this.report('Academy väntar: '+reason+' Fortsätter med övrigt material.');
   }else{await this.api.storage.local.set({academyNotice:''});this.report('Alla Academy-krav är verifierade som klara.');}
+  if(selectedCatalog){this.report('Kontrollerar först samlingen som var öppen när piloten startades.');await this.crawlCatalog(queue,[{url:selectedCatalog,depth:0}],publish,false,true);}
   this.report('Söker nu efter övriga resurser under För dig.');
   await this.crawlCatalog(queue,[{url:'https://salescoach.apple.com/home/for-you',depth:0}],publish,false,true);
   const other=queue.filter(i=>!i.academy&&i.status==='Hittad');
@@ -342,7 +343,7 @@ export class Autopilot {
     if(!videoPhase&&frames.some(f=>f.result.video)){await defer(frames);await publish();return;}
     const request=inputRequest(frames,item.title);if(request){item.status='Behöver dina uppgifter';item.inputQuestion=request.question;item.reason=request.reason;this.report(item.title+': '+request.question);await publish();return;}
     const capability=classifyCourse(frames,item.title);
-    if(!capability.supported){item.status='Behöver hjälp';item.reason=capability.reason;this.report('Hoppar över '+item.title+': '+item.reason);await publish();return;}
+    if(!capability.supported){item.status=capability.code==='ACCESS_DENIED'?'Åtkomst saknas':'Behöver hjälp';item.reason=capability.reason;this.report('Hoppar över '+item.title+': '+item.reason);await publish();return;}
     item.kind=capability.kind;item.status='Kör';item.reason='';await publish();this.report('Kör '+capability.kind.toLowerCase()+': '+item.title);
     this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(item.title);this.testParents=item.parents;const result=await this.resource({deferVideos:!videoPhase});
     if(result==='deferred-video'){await defer([]);await publish();return;}
@@ -359,13 +360,14 @@ export class Autopilot {
  async start(){
   const [tab]=await this.api.tabs.query({active:true,currentWindow:true});if(!tab?.id||!isCoachURL(tab.url))throw new Error('Öppna en prestation eller kurs i Sales Coach.');
   this.tabId=tab.id;this.expectedURL=tab.url;
-  const p=await this.inventory();const badge=/\/achievements\//.test(new URL(p.url).pathname);
-  if(badge){
+  const p=await this.inventory();const collection=/^\/home\/(?:achievements\/(?:unearned|earned)|collection\/[^/]+)$/.test(new URL(p.url).pathname);
+  if(collection){
    if(p.earned){this.report('Prestationen är redan registrerad som klar.');return;}
    const pending=p.items.filter(i=>!i.completed&&!i.locked);if(!pending.length)throw new Error('Inga öppna moment hittades. Låsta moment måste låsas upp i Sales Coach.');
-   for(const item of pending){this.report('Öppnar '+item.title);await this.navigate(item.url);await this.resource();const verified=await this.verifyCompletion({title:item.title,key:new URL(item.url).pathname,parents:[p.url]});if(!verified)throw new Error('Sales Coach har inte registrerat momentet som klart efter flera kontroller: '+item.title);this.report('Registrerat klart: '+item.title);}
-   const final=await this.inventory();if(!final.earned&&final.items.some(i=>!i.completed))throw new Error('Fler moment återstår, exempelvis låsta resurser.');this.report('Prestationens moment är registrerade som klara.');
-  }else if(/\/content\/view\//.test(new URL(p.url).pathname)){
+   const queue=pending.map(item=>({...item,key:new URL(item.url).pathname,parents:[p.url],status:'Hittad',reason:'',academy:false}));this.report('Bearbetar '+queue.length+' öppna krav på den här sidan.');await this.processQueue(queue,async()=>this.onQueue?.(queue.map(i=>({...i}))));await this.navigate(p.url);const final=await this.inventory();
+   if(!final.earned&&final.items.some(i=>!i.completed)){const blocked=queue.filter(i=>i.status!=='Registrerad klar');throw new Error('Fler krav återstår. '+blocked.map(i=>i.title+': '+i.reason).join(' '));}this.report('Samlingens moment är registrerade som klara.');
+  }else if(/\/home\/(?:content\/view|course)\//.test(new URL(p.url).pathname)){
+   const capability=classifyCourse(await this.frames(),p.title);if(!capability.supported){const error=new Error(capability.reason);error.code=capability.code;throw error;}
    this.testParents=new URL(tab.url).searchParams.getAll('backTo').filter(v=>/^\/home\/collection\/[^/?]+$/.test(v)).map(v=>new URL(v,'https://salescoach.apple.com').href);if(!this.testParents.length){const known=KNOWN_TESTS[new URL(tab.url).pathname];if(known)this.testParents=[known.parent];}this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(p.title);this.report('Bearbetar den öppna kursen.');await this.resource();await this.inventory();
    if(this.testParents?.length){
     const testPath=new URL(p.url).pathname;const verified=await this.verifyCompletion({title:p.title,key:testPath,parents:this.testParents});

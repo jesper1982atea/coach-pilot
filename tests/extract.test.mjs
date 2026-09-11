@@ -4,8 +4,8 @@ function page(html,url='https://salescoach.apple.com/home/achievements/unearned/
  const dom=new JSDOM(html,{url});global.document=dom.window.document;global.location=dom.window.location;global.getComputedStyle=dom.window.getComputedStyle;dom.window.HTMLElement.prototype.getClientRects=function(){return this.hidden?[]:[{}]};dom.window.HTMLElement.prototype.scrollIntoView=function(){};return dom;
 }
 test('Inventory accepts only Sales Coach resources and preserves completion state',()=>{
- page('<main><h1>Fälttjänster</h1><a href="/home/content/view/12" aria-label="Content Klar resurs 3 minutes, completed">Klar resurs</a><a href="/home/content/view/13" aria-disabled="true">Låst</a><a href="https://evil.example/home/content/view/14">Extern</a><a href="javascript:alert(1)">Kod</a></main>');
- const r=extractPage();assert.equal(r.items.length,2);assert.equal(r.items[0].completed,true);assert.equal(r.items[0].title,'Klar resurs');assert.equal(r.items[1].locked,true);assert.equal(r.earned,false);
+ page('<main><h1>Fälttjänster</h1><a href="/home/content/view/12" aria-label="Content Klar resurs 3 minutes, completed">Klar resurs</a><a href="/home/content/view/13" aria-disabled="true">Låst</a><a href="/home/course/35019" aria-label="Course iPhone—utöka möjligheterna 138 minutes">Kurs</a><a href="https://evil.example/home/content/view/14">Extern</a><a href="javascript:alert(1)">Kod</a></main>');
+ const r=extractPage();assert.equal(r.items.length,3);assert.equal(r.items[0].completed,true);assert.equal(r.items[0].title,'Klar resurs');assert.equal(r.items[1].locked,true);assert.equal(r.items[2].title,'iPhone—utöka möjligheterna');assert.equal(r.earned,false);
 });
 test('Learning text excludes entered personal values and hidden paragraphs',()=>{
  page('<main><h1>Kurs</h1><p>Synligt underlag</p><p hidden>Hemligt</p><textarea>Privat svar</textarea><input value="lösenord"></main>');const r=extractPage();assert.match(r.text,/Synligt/);assert.doesNotMatch(r.text,/Hemligt|Privat|lösenord/);

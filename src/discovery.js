@@ -3,7 +3,7 @@ export function catalogPage(command={}) {
  const visible=e=>!!e.getClientRects().length&&!e.closest('[hidden],[aria-hidden="true"]');
  const links=[...document.querySelectorAll('a[href]')].filter(visible).flatMap(a=>{
   try{const u=new URL(a.href);if(u.origin!=='https://salescoach.apple.com')return [];
-   const path=u.pathname;const resource=/^\/home\/content\/view\/\d+$/.test(path),badge=/^\/home\/achievements\/unearned\/\d+$/.test(path);
+   const path=u.pathname;const resource=/^\/home\/(?:content\/view|course)\/\d+$/.test(path),badge=/^\/home\/achievements\/unearned\/\d+$/.test(path);
    const catalog=/^\/home\/(for-you(?:\/.*)?|achievements(?:\/unearned)?|collection\/[^/]+|program\/\d+\/\d+|explore\/(collections|curriculum\/\d+))$/.test(path);
    if(!resource&&!badge&&!catalog)return [];
    const title=clean(a.getAttribute('aria-label')||a.innerText||a.textContent);if(!title)return [];
@@ -24,6 +24,7 @@ export function classifyCourse(frames,title='') {
  if(/formulär|survey|enkät/i.test(title))return {supported:false,reason:'Formulär kräver egna uppgifter och fritextsvar. Öppna och fyll i formuläret manuellt.'};
  const states=frames.map(f=>f.result).filter(Boolean);
  if(!states.length)return {supported:false,reason:'Inget åtkomligt kursinnehåll'};
+ if(states.some(s=>/Du får tillgång till (?:de här|dessa) kursuppgifterna? när du har blivit inbjuden till eventet|course (?:tasks|materials).*invited to the event/i.test((s.text||'')+' '+(s.lesson||''))))return {supported:false,code:'ACCESS_DENIED',reason:'Kursen kräver en inbjudan till eventet i Sales Coach.'};
  if(states.some(s=>s.freeText||(s.groups>1&&!s.questions?.length)))return {supported:false,reason:'Fritext eller otydligt grupperade frågor'};
  if(states.some(s=>s.video))return {supported:true,kind:'Video'};
  if(states.some(s=>s.options?.length>=2))return {supported:true,kind:'Flervalsfråga'};

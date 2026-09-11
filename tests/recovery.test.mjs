@@ -22,3 +22,13 @@ test('A blocked video is marked as requiring one click while the queue continues
  const item={url:'https://salescoach.apple.com/home/content/view/7',key:'/home/content/view/7',title:'Video',parents:[]};await p.processQueue([item],async()=>{});
  assert.equal(item.status,'Behöver ett klick');assert.match(item.reason,/Play/);
 });
+
+test('Interactive reading pauses long enough for Sales Coach to register opened sections',async()=>{
+ const waits=[];let opened=false;const p=new Autopilot({api:{},report:()=>{},wait:async()=>{}});p.frames=async()=>[{frameId:0,result:opened?{lesson:'text',sections:[],next:[],options:[],complete:true}:{lesson:'text',sections:['Avsnitt'],next:[],options:[]}}];p.act=async()=>{opened=true;};p.sleep=async ms=>waits.push(ms);
+ await p.resource();assert.ok(waits.includes(3000));
+});
+
+test('Run this page includes course requirements from a specialist collection',async()=>{
+ const collection='https://salescoach.apple.com/home/collection/245263',course='https://salescoach.apple.com/home/course/35019';let received=[];const p=new Autopilot({api:{tabs:{query:async()=>[{id:1,url:collection}]}},report:()=>{},onPage:()=>{}});p.inventory=async()=>({url:collection,earned:false,items:[{title:'iPhone—utöka möjligheterna',url:course,completed:false,locked:false}]});p.processQueue=async queue=>{received=queue;queue[0].status='Åtkomst saknas';queue[0].reason='Kräver eventinbjudan.';};p.navigate=async()=>{};
+ await assert.rejects(p.start(),/eventinbjudan/);assert.equal(received[0].key,'/home/course/35019');
+});

@@ -5,12 +5,12 @@ export function extractPage() {
   const clean = s => (s || '').replace(/\s+/g,' ').trim();
   const items = [...main.querySelectorAll('a[href]')].filter(visible).flatMap(a => {
     let u; try { u = new URL(a.getAttribute('href'),location.href); } catch { return []; }
-    if(u.origin !== 'https://salescoach.apple.com' || !/^\/home\/(content\/view|achievements\/(unearned|earned))\/\d+/.test(u.pathname)) return [];
+    if(u.origin !== 'https://salescoach.apple.com' || !/^\/home\/(content\/view|course|achievements\/(unearned|earned))\/\d+/.test(u.pathname)) return [];
     const label = clean(a.getAttribute('aria-label') || a.innerText || a.textContent);
     if(!label) return [];
     const completed = /(?:, completed|item completed|slutförd|slutfördes)/i.test(label) || !!a.querySelector('[aria-label="item completed"]');
     const locked = a.getAttribute('aria-disabled') === 'true' || /item locked/i.test(label);
-    return [{url:u.href,title:label.replace(/^Content |^Resurs /,'').replace(/\s+\d+ minutes.*$|\s+item (completed|locked).*$/,'').trim(),completed,locked}];
+    return [{url:u.href,title:label.replace(/^Content |^Resurs |^Course |^Kurs /,'').replace(/\s+\d+ minutes.*$|\s+item (completed|locked).*$/,'').trim(),completed,locked}];
   });
   const clone = main.cloneNode(true);
   clone.querySelectorAll('script,style,nav,header,footer,input,textarea,select,[contenteditable="true"],[hidden],[aria-hidden="true"]').forEach(e=>e.remove());
