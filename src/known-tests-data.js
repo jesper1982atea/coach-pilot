@@ -118,5 +118,28 @@ export const KNOWN_TESTS={
         ]
       }
     ]
+  },
+  "/home/content/view/475822": {
+    "verification": "verified-100-2026-09-11",
+    "questions": [
+      {
+        "key": "ee33d63f909098b1bbaca0e3b2a48f09819daffdfc3789464e881d2bec3ad5f2",
+        "answers": [
+          "ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d"
+        ]
+      },
+      {
+        "key": "cef790d82e686eb6da41f3019f03a628c800354c00a8a300a80c5021094e78d3",
+        "answers": [
+          "97dfc65f74283f60c606bda3f75a6a6bec3fc1e513b8b40797b5ecb86c824ee2"
+        ]
+      },
+      {
+        "key": "0f70d2c121fceddaac1450b5f5e6075eeda761abb435e2b9cdf2070818e2fc7d",
+        "answers": [
+          "165d2cfae5fb17965733527ad35c45da1e7bfdf66a439254d42c8b6358fc4d3b"
+        ]
+      }
+    ]
   }
 };

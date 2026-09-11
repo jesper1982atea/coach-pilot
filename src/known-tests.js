@@ -14,5 +14,5 @@ export async function matchKnownTest(state,url,records=KNOWN_TESTS){
   if(chosen.length!==stored.answers.length||chosen.some(o=>o.disabled))return null;
   ids.push(...chosen.map(o=>o.id));
  }
- return {ids:ids.sort((a,b)=>a-b),parent:record.parent,verification:record.verification};
+ return {ids:ids.sort((a,b)=>a-b),parent:record.parent||null,verification:record.verification};
 }

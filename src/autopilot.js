@@ -53,6 +53,7 @@ export function courseFrame(command = {}) {
  const buttons=[...root.querySelectorAll('button,[role="button"],input[type="submit"]')].filter(visible);
  const enabled=e=>!e.matches(':disabled')&&!e.closest('[aria-disabled="true"]');
  const submit=buttons.filter(e=>/^(skicka(?: in)?(?: svar(?:et|en)?)?|svara|kontrollera(?: svar(?:et|en)?)?|submit(?: answer)?|check(?: answer)?)$/i.test(label(e)));
+ const retry=buttons.filter(e=>/^(försök igen|prova igen|gör om|try again|retry)$/i.test(label(e)));
  const next=buttons.filter(e=>/^(nästa(?: fråga|avsnitt|sida)?|fortsätt|gå vidare|next(?: question|section)?|continue|starta (?:kunskapskontroll|quiz|prov)|start (?:quiz|test)|börja)$/i.test(label(e)));
  const sections=buttons.filter(e=>e.getAttribute('aria-expanded')==='false'&&e.closest('h2,h3,h4,[role="heading"]')&&!/skicka|submit|prov|quiz|test/i.test(label(e)));
  const lesson=[...root.querySelectorAll('h1,h2,h3,h4,p,li,td,th,blockquote,a')].filter(e=>visible(e)&&(!choices.length||!containers.some(c=>c.contains(e)))).map(label).filter(Boolean).join('\n').slice(0,40000);
@@ -60,12 +61,13 @@ export function courseFrame(command = {}) {
  const feedback=[...root.querySelectorAll('[role="alert"],.feedback,[class*="feedback"],[class*="Feedback"]')].filter(visible).map(label).join(' ');
  const failed=/\b(incorrect|wrong answer|fel svar|inte rätt|inte korrekt)\b/i.test(feedback);
  const passed=/\b(correct|rätt svar|korrekt svar|bra jobbat)\b/i.test(feedback)&&!failed;
- const resultMatch=clean(root.innerText||root.textContent).match(/(\d{1,3})\s*%?\s*(?:Du fick|Du har|Grattis|Bra jobbat|You)/i);
- const score=options.length&&resultMatch&&(options.every(o=>o.disabled)||!submit.some(enabled))?Number(resultMatch[1]):null;
+ const resultMatch=clean(root.innerText||root.textContent).match(/(\d{1,3})\s*%?\s*(?:Bra jobbat|Du är inte godkänd|Gå igenom dina svar|Du fick|Du har|Grattis|You)/i);
+ const resultLocked=options.length&&(options.every(o=>o.disabled)||retry.some(enabled)||!submit.some(enabled));
+ const score=resultMatch&&resultLocked?Number(resultMatch[1]):null;
  const complete=score===100||/^(grattis[!.]?|du (?:har )?slutfört.*|du är klar[!.]?|congratulations[!.]?|course complete[!.]?)$/im.test(text);
  const video=[...root.querySelectorAll('video')].find(visible);
  const freeText=[...root.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].some(visible);
- const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,submit:submit.length===1&&enabled(submit[0]),next:next.filter(enabled).map(label),sections:sections.filter(enabled).map(label),failed,passed,complete,score,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
+ const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,submit:submit.length===1&&enabled(submit[0]),retry:retry.length===1&&enabled(retry[0]),next:next.filter(enabled).map(label),sections:sections.filter(enabled).map(label),failed,passed,complete,score,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
  if(!command.action)return state;
  if(command.url!==location.href||command.fingerprint!==fingerprint)throw new Error('Sidan ändrades före åtgärden.');
  const click=e=>{if(!e||!enabled(e))throw new Error('Kontrollen är inte tillgänglig.');e.scrollIntoView({block:'center'});e.click();return {acted:true};};
@@ -77,6 +79,10 @@ export function courseFrame(command = {}) {
   if(!state.submit||state.failed||state.freeText||questions.some(q=>{const n=q.options.filter(o=>o.selected).length;return !n||(q.requiredCount!=null&&n!==q.requiredCount);}))throw new Error('Inskickning stoppad: otydlig uppgift eller kontroll.');
   if(JSON.stringify(options.filter(o=>o.selected).map(o=>o.id))!==JSON.stringify(command.ids))throw new Error('De valda svaren stämmer inte med förslaget.');
   return click(submit[0]);
+ }
+ if(command.action==='retry'){
+  if(!state.retry||score===100)throw new Error('Omförsök är inte tillgängligt.');
+  return click(retry[0]);
  }
  if(command.action==='next'){const candidates=next.filter(e=>enabled(e)&&label(e)===command.text);if(candidates.length!==1)throw new Error('Nästa steg är otydligt.');return click(candidates[0]);}
  if(command.action==='expand'){const candidates=sections.filter(e=>enabled(e)&&label(e)===command.text);if(candidates.length!==1)throw new Error('Läsavsnittet är otydligt.');return click(candidates[0]);}
@@ -101,7 +107,7 @@ export function validateAnswer(raw,state,context){
 }
 
 export class Autopilot {
- constructor({api,native,report,onPage,onQueue,onStatus=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms))}){Object.assign(this,{api,native,report,onPage,onQueue,onStatus,wait});this.stopped=false;this.submitted=new Set();this.context='';}
+ constructor({api,native,report,onPage,onQueue,onStatus=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms))}){Object.assign(this,{api,native,report,onPage,onQueue,onStatus,wait});this.stopped=false;this.submitted=new Set();this.failedAttempts=new Map();this.maxTestAttempts=4;this.context='';}
  stop(){this.stopped=true;}
  async checkAccess(){
   const t=await this.api.tabs.get(this.tabId);if(this.stopped||!t.active||!isCoachURL(t.url))return;
@@ -142,10 +148,13 @@ export class Autopilot {
   const key=this.expectedURL+'|'+s.fingerprint;if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
   const context=relevantContext(this.context,s.prompt,5500);if(context.trim().length<60)throw new Error('Kursunderlag saknas för att besvara frågan. Läs materialet först.');
   this.report('Läser frågan och ber Apple Intelligence om svar…');
-  const question=s.prompt+'\n'+s.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(s.multi?'Flera alternativ kan vara rätt.':'Exakt ett alternativ ska väljas.');
+  const previous=this.failedAttempts.get(key)||[];
+  const history=previous.length?'\nTidigare svar '+previous.map(a=>a.ids.join('+')+' gav '+(a.score==null?'underkänt resultat':a.score+' %')).join('; ')+'. Granska frågan på nytt mot källan och upprepa inte ett underkänt svar.':'';
+  const question=s.prompt+'\n'+s.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(s.multi?'Flera alternativ kan vara rätt.':'Exakt ett alternativ ska väljas.')+history;
   if(question.length>2000)throw new Error('Frågan är för lång för den lokala bryggan.');
   const reply=await this.native({action:'choose',context,question});await this.guard();if(!reply.ok)throw new Error(reply.error||reply.message||'AI-anropet misslyckades.');
   const answer=validateAnswer(reply.text,s,context);this.report('AI föreslår '+answer.ids.join(', ')+': '+answer.reason);
+  if(previous.some(a=>JSON.stringify(a.ids)===JSON.stringify(answer.ids)))throw new Error('Apple Intelligence upprepade ett redan underkänt svar. Inget nytt svar skickades in.');
   let fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades medan AI arbetade.');
   for(const option of s.options){const selected=answer.ids.includes(option.id);if(fresh.result.options.find(o=>o.id===option.id)?.selected!==selected){await this.act(fresh,'select',{id:option.id,text:option.text,selected});fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades när svar valdes.');}}
   this.submitted.add(key);await this.act(fresh,'submit',{ids:answer.ids});this.report('Svar inskickat. Kontrollerar återkopplingen.');
@@ -187,14 +196,16 @@ export class Autopilot {
   if(s.freeText||!questions?.length||questions.length>20||questions.some(q=>!q.prompt||q.options.length<2||q.options.length>12||q.options.some(o=>!o.text)))throw new Error('Testets frågor behöver granskas manuellt.');
   const key=this.expectedURL+'|'+s.fingerprint;
   if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
-  const answers=[];const known=await matchKnownTest(s,this.expectedURL);
+  const attempts=this.failedAttempts.get(key)||[];const answers=[];const known=await matchKnownTest(s,this.expectedURL);
   if(known){answers.push({ids:known.ids});this.report('Använder kursgranskade svar: alla frågor och alternativ matchar svarstabellen.');}
   else for(const [index,q] of questions.entries()){
    const local={...q,options:q.options.map((o,i)=>({...o,id:i+1}))};
    const context=indexContext(relevantContext(this.context,q.prompt+' '+q.options.map(o=>o.text).join(' '),5000));
    if(context.trim().length<60)throw new Error('Kursunderlag saknas för kunskapstestet. Läs kursmaterialet först.');
    this.report('Kunskapstest: analyserar fråga '+(index+1)+' av '+questions.length+'…');
-   const question=q.prompt+'\n'+local.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(q.requiredCount?'Välj exakt '+q.requiredCount+' alternativ.':q.multi?'Flera alternativ kan vara rätt.':'Välj ett alternativ.');
+   const prior=attempts.map(a=>({score:a.score,answers:a.ids.filter(id=>q.options.some(o=>o.id===id)).map(id=>q.options.findIndex(o=>o.id===id)+1)})).filter(a=>a.answers.length);
+   const history=prior.length?'\nTidigare fullständiga försök blev underkända: '+prior.map(a=>'den här frågan hade '+a.answers.join('+')+' och totalresultatet blev '+a.score+' %').join('; ')+'. Granska varje påstående på nytt mot källan. Den fullständiga underkända kombinationen får inte upprepas.':'';
+   const question=q.prompt+'\n'+local.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(q.requiredCount?'Välj exakt '+q.requiredCount+' alternativ.':q.multi?'Flera alternativ kan vara rätt.':'Välj ett alternativ.')+history;
    if(question.length>1900)throw new Error('Frågan är för lång för den lokala bryggan.');
    let answer,lastError;
    for(let attempt=0;attempt<2;attempt++){
@@ -208,6 +219,7 @@ export class Autopilot {
   }
   // No page mutations until every question has a supported answer.
   const ids=answers.flatMap(a=>a.ids).sort((a,b)=>a-b);
+  if(attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))throw new Error('Apple Intelligence upprepade en redan underkänd svarskombination. Inget nytt försök skickades in.');
   const refresh=async()=>{
    for(let attempt=0;attempt<3;attempt++){
     const available=await this.frames(),matches=available.filter(f=>f.result.fingerprint===s.fingerprint);
@@ -227,13 +239,23 @@ export class Autopilot {
    const frames=await this.frames();const all=frames.map(f=>f.result);
    if(deferVideos&&all.some(s=>s.video)){for(const f of frames)if(f.result.video&&!f.result.video.ended)await this.act(f,'pauseVideo');return 'deferred-video';}
    if(all.some(s=>s.score===100)){this.report('Sales Coach visar 100 procent på kunskapstestet.');return 'passed';}
-   if(all.some(s=>s.score!=null))throw new Error('Sales Coach visar '+all.find(s=>s.score!=null).score+' procent. Testet behöver granskas.');
-   if(all.some(s=>s.failed))throw new Error('Sales Coach visar fel svar. Autopiloten har pausats.');
+   const result=frames.find(f=>f.result.score!=null&&f.result.score<100);
+   if(result){
+    const key=this.expectedURL+'|'+result.result.fingerprint,ids=result.result.options.filter(o=>o.selected).map(o=>o.id).sort((a,b)=>a-b),attempts=this.failedAttempts.get(key)||[];
+    if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:result.result.score});
+    this.failedAttempts.set(key,attempts);this.submitted.delete(key);submissionWait=0;
+    if(attempts.length>=this.maxTestAttempts)throw new Error('Sales Coach visar '+result.result.score+' procent efter '+attempts.length+' olika försök. Testet pausas för granskning.');
+    if(result.result.retry){this.report('Sales Coach visar '+result.result.score+' procent. Försök '+(attempts.length+1)+' av '+this.maxTestAttempts+' granskar svaren på nytt.');this.onStatus({phase:'Granskar om underkänt test ('+(attempts.length+1)+'/'+this.maxTestAttempts+')',heartbeat:Date.now(),media:null});await this.act(result,'retry');idle=0;continue;}
+    throw new Error('Sales Coach visar '+result.result.score+' procent men erbjuder inget säkert omförsök.');
+   }
+   const failed=frames.find(f=>f.result.failed);
+   if(failed?.result.retry){const key=this.expectedURL+'|'+failed.result.fingerprint,ids=failed.result.options.filter(o=>o.selected).map(o=>o.id).sort((a,b)=>a-b),attempts=this.failedAttempts.get(key)||[];if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:null});this.failedAttempts.set(key,attempts);this.submitted.delete(key);if(attempts.length>=this.maxTestAttempts)throw new Error('Testet är fortfarande underkänt efter '+attempts.length+' olika försök.');this.report('Sales Coach visar fel svar. Granskar svaren på nytt.');await this.act(failed,'retry');idle=0;continue;}
+   if(failed)throw new Error('Sales Coach visar fel svar och erbjuder inget säkert omförsök.');
    const request=inputRequest(frames);if(request){const e=new Error(request.reason);e.code='USER_INPUT_REQUIRED';e.request=request;throw e;}
    const question=frames.find(f=>f.result.options.length>0&&!f.result.passed);
    // Accumulate lesson paragraphs, excluding frames displaying answer choices.
    for(const f of frames)this.context=(this.context+'\n'+f.result.lesson).split('\n').filter((s,i,a)=>s&&a.indexOf(s)===i).join('\n').slice(-100000);
-   if(question){if(this.submitted.has(this.expectedURL+'|'+question.result.fingerprint)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180){this.report('Resultatvyn svarar inte. Kontrollerar om Sales Coach registrerade testet i samlingen.');return 'submitted-pending';}this.onStatus({phase:'Väntar på testresultat från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}if(question.result.groups>1&&!prepared){const known=await matchKnownTest(question.result,this.expectedURL);if(known)this.testParents=[known.parent];else await this.prepareTest();prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
+   if(question){if(this.submitted.has(this.expectedURL+'|'+question.result.fingerprint)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180){this.report('Resultatvyn svarar inte. Kontrollerar om Sales Coach registrerade testet i samlingen.');return 'submitted-pending';}this.onStatus({phase:'Väntar på testresultat från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}if(question.result.groups>1&&!prepared){const known=await matchKnownTest(question.result,this.expectedURL);if(known){if(known.parent)this.testParents=[known.parent];}else await this.prepareTest();prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
    if(all.some(s=>s.freeText))throw new Error('En fritextfråga behöver ditt svar.');
    const video=frames.find(f=>f.result.video&&!f.result.video.ended);
    if(video){
@@ -368,7 +390,7 @@ export class Autopilot {
    if(!final.earned&&final.items.some(i=>!i.completed)){const blocked=queue.filter(i=>i.status!=='Registrerad klar');throw new Error('Fler krav återstår. '+blocked.map(i=>i.title+': '+i.reason).join(' '));}this.report('Samlingens moment är registrerade som klara.');
   }else if(/\/home\/(?:content\/view|course)\//.test(new URL(p.url).pathname)){
    const capability=classifyCourse(await this.frames(),p.title);if(!capability.supported){const error=new Error(capability.reason);error.code=capability.code;throw error;}
-   this.testParents=new URL(tab.url).searchParams.getAll('backTo').filter(v=>/^\/home\/collection\/[^/?]+$/.test(v)).map(v=>new URL(v,'https://salescoach.apple.com').href);if(!this.testParents.length){const known=KNOWN_TESTS[new URL(tab.url).pathname];if(known)this.testParents=[known.parent];}this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(p.title);this.report('Bearbetar den öppna kursen.');await this.resource();await this.inventory();
+   this.testParents=new URL(tab.url).searchParams.getAll('backTo').filter(v=>/^\/home\/collection\/[^/?]+$/.test(v)).map(v=>new URL(v,'https://salescoach.apple.com').href);if(!this.testParents.length){const known=KNOWN_TESTS[new URL(tab.url).pathname];if(known?.parent)this.testParents=[known.parent];}this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(p.title);this.report('Bearbetar den öppna kursen.');await this.resource();await this.inventory();
    if(this.testParents?.length){
     const testPath=new URL(p.url).pathname;const verified=await this.verifyCompletion({title:p.title,key:testPath,parents:this.testParents});
     if(!verified)throw new Error('Testet har bearbetats men Sales Coach har ännu inte registrerat det som klart.');
