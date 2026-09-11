@@ -281,9 +281,9 @@ export class Autopilot {
   const blockers=this.academyAudit?.blocked||[];
   if(unresolved.length||!this.academyAudit?.rootComplete||blockers.length){
    const reason=[unresolved.length?unresolved.length+' Academy-moment återstår.':'',...new Set(blockers),!this.academyAudit?.rootComplete?'Sales Coach har inte bekräftat alla krav på Academys programsida.':''].filter(Boolean).join(' ');
-   await publish();throw new Error('Academy behöver slutföras innan övriga resurser startas. '+reason);
-  }
-  this.report('Alla Academy-krav är verifierade som klara.');
+   await this.api.storage.local.set({academyNotice:'Academy väntar: '+reason});
+   await publish();this.report('Academy väntar: '+reason+' Fortsätter med övrigt material.');
+  }else{await this.api.storage.local.set({academyNotice:''});this.report('Alla Academy-krav är verifierade som klara.');}
   this.report('Söker nu efter övriga resurser under För dig.');
   await this.crawlCatalog(queue,[{url:'https://salescoach.apple.com/home/for-you',depth:0}],publish,false);
   const other=queue.filter(i=>!i.academy&&i.status==='Hittad');

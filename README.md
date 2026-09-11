@@ -30,6 +30,6 @@ Tre svenska Academy-tester för Mac, iPad och iPhone verifierades med 100 % den 
 
 Källkod publiceras för insyn. Ingen separat öppen källkodslicens har valts.
 
-## Academy först (från 0.5.1)
+## Academy först (från 0.5.4)
 
-Automatisk körning stannar inom Academy tills programräknaren visar samtliga krav slutförda och inventeringen inte har kvar ouppklarade moment, låsta grenar eller åtkomstfel. En tom kö räknas inte som klar Academy. Nya upplåsningar söks efter framsteg (högst 20 omgångar); ofullständig inventering stoppar övergången. Videor körs sist inom Academy. Om något kräver hjälp visas orsaken och annat material startas inte. Detta styr ordningen och garanterar inte att piloten kan besvara varje frågetyp eller låsa upp material.
+Piloten försöker Academy först och söker nya upplåsningar efter framsteg. När Academy inte kan slutföras fortsätter den med övrigt under För dig. Ett bestående besked visar återstående låsningar och krav utan att markera Academy som klar. Nästa automatiska sökning försöker Academy på nytt. Personliga uppgifter efterfrågas i panelen och skickas in manuellt i Sales Coach.
