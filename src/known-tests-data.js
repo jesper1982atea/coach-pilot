@@ -141,5 +141,24 @@ export const KNOWN_TESTS={
         ]
       }
     ]
+  },
+  "/home/content/view/475834": {
+    "parent": "https://salescoach.apple.com/home/collection/240452",
+    "verification": "verified-100-23xp-2026-09-11",
+    "questions": [
+      {
+        "key": "f09921ce3c8a23318a1bcc8edd831ca45e7211ba48e7e8cd9dda13ba885dcca8",
+        "answers": [
+          "75738c5a62ff60f5d56b3f2ff69704c66bb61b7bb69e59336679a9da63b1ad37",
+          "19e67911595790b2e8b18abfb591e299eb9bf33549522db526f141bfabbb5168"
+        ]
+      },
+      {
+        "key": "3325279ab802edd43823fba1340905d2dd4b88c3003f980f6e4479cc6f1f7ed6",
+        "answers": [
+          "015d45c9082257f89b83b57f78f5e615817da8f484021f39d23675dc232f73c5"
+        ]
+      }
+    ]
   }
 };

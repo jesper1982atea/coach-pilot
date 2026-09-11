@@ -16,7 +16,8 @@ guide=(res/'Startguide.html').read_text().replace('KOLLEGAPILOT 0.5.0','KOLLEGAP
 (res/'Startguide.html').write_text(guide)
 info={'CFBundleDisplayName':'Coach Pilot Setup','CFBundleExecutable':'CoachPilotSetup','CFBundleIconFile':'AppIcon','CFBundleIdentifier':'se.atea.coachpilot.setup','CFBundleName':'Coach Pilot Setup','CFBundlePackageType':'APPL','CFBundleShortVersionString':version,'CFBundleVersion':version,'LSMinimumSystemVersion':'26.0','NSHighResolutionCapable':True}
 (contents/'Info.plist').write_bytes(plistlib.dumps(info))
-subprocess.run(['xcrun','swiftc','-parse-as-library','-O','-module-cache-path',str((root/'.swift-cache').resolve()),'-target','arm64-apple-macosx26.0',str(root/'installer/InstallerCore.swift'),str(build/'SetupApp.swift'),'-o',str(contents/'MacOS/CoachPilotSetup')],check=True)
+module_cache=Path(staging.name)/'.swift-cache';module_cache.mkdir()
+subprocess.run(['xcrun','swiftc','-parse-as-library','-O','-module-cache-path',str(module_cache),'-target','arm64-apple-macosx26.0',str(root/'installer/InstallerCore.swift'),str(build/'SetupApp.swift'),'-o',str(contents/'MacOS/CoachPilotSetup')],check=True)
 (payload/'checksums.json').write_text(json.dumps({str(f.relative_to(payload)):hashlib.sha256(f.read_bytes()).hexdigest() for f in payload.rglob('*') if f.is_file()},indent=2))
 subprocess.run(['xattr','-cr',str(app)],check=True)
 subprocess.run(['codesign','--force','--sign','-','--timestamp=none',str(app)],check=True)

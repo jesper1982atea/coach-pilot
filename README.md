@@ -57,3 +57,9 @@ På interaktiva kurssidor öppnar piloten alla avsnitt och går igenom relevanta
 ## Rulla hela kursen (från 0.6.1)
 
 Piloten rullar stegvis genom både sidan och inre rullbara kursytor. Nya och nästlade avsnitt som visas efter ett klick bearbetas rekursivt. Flera interna **Nästa/Fortsätt**-kontroller kan följas en i taget genom kursens undersidor. Efter bottenläget och undersidorna väntar piloten på XP eller success och kontrollerar sedan samlingens registrering. Utan någon av dessa bekräftelser visas momentet som **Ej verifierad**, aldrig som klart.
+
+## Sparad uppföljning (från 0.7.0)
+
+Ofärdiga moment sparas lokalt i Edge mellan körningar med status, orsak, länk och antal försök. Bestående inbjudningskrav och moment som behöver personliga uppgifter hoppas över direkt i senare autopilotkörningar. Panelen visar dem under **Återstår** med en knapp för att öppna sidan och begära en ny kontroll. När Sales Coach senare registrerar momentet som klart tas det automatiskt bort ur listan.
+
+Kunskapstestet **Mac – Möjligheter med uppgradering** (`475834`) har innehållsmatchade svar som verifierades med **100 % och 23 XP** den 11 september 2026. Efter **Försök igen** väntar piloten nu på att den gamla resultatramen verkligen ska ersättas innan ett nytt svar analyseras.
