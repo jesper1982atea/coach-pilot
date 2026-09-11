@@ -1,10 +1,10 @@
 """Package a built extension and Mac bridge; run on Apple Silicon macOS 26+."""
 from pathlib import Path
-import json, shutil, plistlib, subprocess, hashlib, zipfile
+import json, shutil, plistlib, subprocess, hashlib, zipfile, tempfile
 root=Path(__file__).resolve().parent.parent
 manifest=json.loads((root/'dist/manifest.json').read_text());version=manifest['version']
-build=root/'build';app=build/'Coach Pilot Setup.app';contents=app/'Contents';res=contents/'Resources';payload=res/'Payload'
-if app.exists():shutil.rmtree(app)
+build=root/'build';build.mkdir(exist_ok=True)
+staging=tempfile.TemporaryDirectory(prefix='coach-pilot-release-');app=Path(staging.name)/'Coach Pilot Setup.app';contents=app/'Contents';res=contents/'Resources';payload=res/'Payload'
 (contents/'MacOS').mkdir(parents=True);payload.mkdir(parents=True)
 shutil.copytree(root/'dist',payload/'extension')
 shutil.copy2(root/'native/bin/CoachBridge',payload/'CoachBridge')
@@ -18,6 +18,7 @@ info={'CFBundleDisplayName':'Coach Pilot Setup','CFBundleExecutable':'CoachPilot
 (contents/'Info.plist').write_bytes(plistlib.dumps(info))
 subprocess.run(['xcrun','swiftc','-parse-as-library','-O','-module-cache-path',str((root/'.swift-cache').resolve()),'-target','arm64-apple-macosx26.0',str(root/'installer/InstallerCore.swift'),str(build/'SetupApp.swift'),'-o',str(contents/'MacOS/CoachPilotSetup')],check=True)
 (payload/'checksums.json').write_text(json.dumps({str(f.relative_to(payload)):hashlib.sha256(f.read_bytes()).hexdigest() for f in payload.rglob('*') if f.is_file()},indent=2))
+subprocess.run(['xattr','-cr',str(app)],check=True)
 subprocess.run(['codesign','--force','--sign','-','--timestamp=none',str(app)],check=True)
 subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
 archive=build/f'Coach-Pilot-Kollegapaket-{version}.zip';prefix='Coach Pilot – Kollegapilot/'

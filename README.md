@@ -37,3 +37,7 @@ Piloten försöker Academy först och söker nya upplåsningar efter framsteg. N
 ## Börja direkt (från 0.5.6)
 
 Piloten bygger inte längre en fullständig inventering innan arbetet börjar. När ett ogjort moment hittas bearbetas det och slutförandet kontrolleras innan sökningen fortsätter. Academy försöks först. Även video körs direkt när momentet hittas; ett misslyckat eller personligt moment lämnas för uppföljning och provas inte om i samma körning. Antalet hittade moment växer under körningen och är inte hela webbplatsens total.
+
+## Stabilare körning (från 0.5.7)
+
+Tillfälligt utbytta Sales Coach-ramar återansluts automatiskt och avbryter inte längre hela sökningen. Efter läsning eller inskickat test kontrolleras samlingen flera gånger eftersom registreringen kan dröja. Om Edge kräver ett användarklick för video visas **Behöver ett klick** med en knapp som öppnar rätt video; tryck Play och starta sedan autopiloten igen.

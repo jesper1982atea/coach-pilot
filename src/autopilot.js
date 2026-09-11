@@ -6,6 +6,8 @@ import {accessDialog,followVisibleLink} from './navigation.js';
 import {catalogPage,classifyCourse,addCandidates,isVideoResource,prioritizeResources,ACADEMY_URL,academyChild} from './discovery.js';
 import {extractPage,mergeFrames,relevantContext,isCoachURL,indexContext} from './extract.js';
 
+export function isTransientFrameError(error){return /frame with id .* removed|no frame with id|frame.*(?:was )?removed|execution context.*(?:destroyed|invalidated)|cannot access contents of url/i.test(error?.message||String(error));}
+
 // Self-contained content script. AI can choose answer numbers, never selectors or code.
 export function courseFrame(command = {}) {
  const clean=s=>(s||'').replace(/\s+/g,' ').trim();
@@ -103,27 +105,35 @@ export class Autopilot {
  stop(){this.stopped=true;}
  async checkAccess(){
   const t=await this.api.tabs.get(this.tabId);if(this.stopped||!t.active||!isCoachURL(t.url))return;
-  const r=await this.api.scripting.executeScript({target:{tabId:this.tabId,frameIds:[0]},func:accessDialog,args:[true]});
+  const r=await this.script({target:{tabId:this.tabId,frameIds:[0]},func:accessDialog,args:[true]});
   if(r[0]?.result?.denied){this.expectedURL=t.url;const e=new Error(r[0].result.message+' Momentet läggs åt sidan.');e.code='ACCESS_DENIED';throw e;}
  }
  async guard(){if(this.stopped)throw new Error('Stoppad av dig.');const t=await this.api.tabs.get(this.tabId);if(!t.active||!isCoachURL(t.url))throw new Error('Pausad eftersom du bytte flik eller sida.');if(new URL(t.url).pathname!==new URL(this.expectedURL).pathname){await this.checkAccess();throw new Error('Pausad eftersom du bytte flik eller sida.');}this.expectedURL=t.url;}
  async sleep(ms){for(let n=0;n<ms;n+=250){if(this.stopped)throw new Error('Stoppad av dig.');await this.wait(Math.min(250,ms-n));}}
- async frames(){await this.guard();await this.checkAccess();const frames=(await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:courseFrame})).filter(f=>f.result);this.onStatus({heartbeat:Date.now()});return frames;}
- async act(frame,action,extra={}){await this.guard();await this.api.scripting.executeScript({target:frame.documentId?{tabId:this.tabId,documentIds:[frame.documentId]}:{tabId:this.tabId,frameIds:[frame.frameId]},func:courseFrame,args:[{action,url:frame.result.url,fingerprint:frame.result.fingerprint,...extra}]});await this.sleep(800);}
- async inventory(){await this.guard();const r=await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:extractPage});const p=mergeFrames(r);this.onPage(p);return p;}
+ async script(details,{attempts=4}={}){
+  for(let attempt=1;attempt<=attempts;attempt++)try{return await this.api.scripting.executeScript(details);}catch(error){
+   if(!isTransientFrameError(error))throw error;
+   if(attempt===attempts){const exhausted=new Error('Sales Coach fortsatte byta sidram. Momentet läggs åt sidan och sökningen fortsätter.');exhausted.code='TRANSIENT_FRAME';throw exhausted;}
+   this.report('Sales Coach bytte sidram. Återansluter ('+attempt+'/'+(attempts-1)+')…');this.onStatus({phase:'Återansluter till Sales Coach',heartbeat:Date.now(),media:null});
+   await this.sleep(350*attempt);const tab=await this.api.tabs.get(this.tabId);if(!tab.active||!isCoachURL(tab.url))throw error;
+  }
+ }
+ async frames(){await this.guard();await this.checkAccess();const frames=(await this.script({target:{tabId:this.tabId,allFrames:true},func:courseFrame})).filter(f=>f.result);this.onStatus({heartbeat:Date.now()});return frames;}
+ async act(frame,action,extra={}){await this.guard();try{await this.script({target:frame.documentId?{tabId:this.tabId,documentIds:[frame.documentId]}:{tabId:this.tabId,frameIds:[frame.frameId]},func:courseFrame,args:[{action,url:frame.result.url,fingerprint:frame.result.fingerprint,...extra}]},{attempts:1});}catch(error){if(isTransientFrameError(error)){const changed=new Error('Sales Coach bytte sida under åtgärden. Momentet kontrolleras igen vid nästa körning.');changed.code='PAGE_CHANGED';throw changed;}throw error;}await this.sleep(800);}
+ async inventory(){await this.guard();const r=await this.script({target:{tabId:this.tabId,allFrames:true},func:extractPage});const p=mergeFrames(r);this.onPage(p);return p;}
  async navigate(url){
   await this.guard();if(!isCoachURL(url))throw new Error('Resursen ligger utanför Sales Coach.');await this.checkAccess();
   const previous=this.expectedURL,targetPath=new URL(url).pathname;
   if(new URL(previous).pathname===targetPath)return;
-  let result=await this.api.scripting.executeScript({target:{tabId:this.tabId,frameIds:[0]},func:followVisibleLink,args:[url]});
+  let result=await this.script({target:{tabId:this.tabId,frameIds:[0]},func:followVisibleLink,args:[url]});
   if(!result[0]?.result?.clicked&&targetPath==='/home/program/7047/368135'){
    if(new URL(previous).pathname!=='/home/for-you')await this.navigate('https://salescoach.apple.com/home/for-you');
-   result=await this.api.scripting.executeScript({target:{tabId:this.tabId,frameIds:[0]},func:followVisibleLink,args:[url]});
+   result=await this.script({target:{tabId:this.tabId,frameIds:[0]},func:followVisibleLink,args:[url]});
    if(!result[0]?.result?.clicked){const e=new Error('Academy-kortet är inte tillgängligt under För dig. Ett aktivt programval kan behövas.');e.code='ACCESS_DENIED';throw e;}
   }else if(!result[0]?.result?.clicked){await this.api.tabs.update(this.tabId,{url});}
   for(let i=0;i<24;i++){
    await this.sleep(500);if(this.stopped)throw new Error('Stoppad av dig.');const t=await this.api.tabs.get(this.tabId);if(!t.active||!isCoachURL(t.url))throw new Error('Pausad eftersom du bytte flik eller sida.');await this.checkAccess();
-   if(new URL(t.url).pathname===targetPath){this.expectedURL=t.url;const r=await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:extractPage});if(r.some(f=>(f.result?.text||'').length>100)){await this.sleep(700);await this.checkAccess();await this.guard();return;}}
+   if(new URL(t.url).pathname===targetPath){this.expectedURL=t.url;const r=await this.script({target:{tabId:this.tabId,allFrames:true},func:extractPage});if(r.some(f=>(f.result?.text||'').length>100)){await this.sleep(700);await this.checkAccess();await this.guard();return;}}
   }
   const t=await this.api.tabs.get(this.tabId);if(new URL(t.url).pathname!==targetPath)throw new Error('Navigationen nådde inte den valda sidan.');this.expectedURL=t.url;
  }
@@ -223,14 +233,14 @@ export class Autopilot {
    const question=frames.find(f=>f.result.options.length>0&&!f.result.passed);
    // Accumulate lesson paragraphs, excluding frames displaying answer choices.
    for(const f of frames)this.context=(this.context+'\n'+f.result.lesson).split('\n').filter((s,i,a)=>s&&a.indexOf(s)===i).join('\n').slice(-100000);
-   if(question){if(this.submitted.has(this.expectedURL+'|'+question.result.fingerprint)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180)throw new Error('Sales Coach har inte lämnat testresultat efter inskickningen.');this.onStatus({phase:'Väntar på testresultat från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}if(question.result.groups>1&&!prepared){const known=await matchKnownTest(question.result,this.expectedURL);if(known)this.testParents=[known.parent];else await this.prepareTest();prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
+   if(question){if(this.submitted.has(this.expectedURL+'|'+question.result.fingerprint)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180){this.report('Resultatvyn svarar inte. Kontrollerar om Sales Coach registrerade testet i samlingen.');return 'submitted-pending';}this.onStatus({phase:'Väntar på testresultat från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}if(question.result.groups>1&&!prepared){const known=await matchKnownTest(question.result,this.expectedURL);if(known)this.testParents=[known.parent];else await this.prepareTest();prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
    if(all.some(s=>s.freeText))throw new Error('En fritextfråga behöver ditt svar.');
    const video=frames.find(f=>f.result.video&&!f.result.video.ended);
    if(video){
     const v=video.result.video;videoTrack=trackVideo(videoTrack,v,Date.now());
     this.onStatus({phase:v.paused?'Väntar på videospelaren':'Spelar video',media:{time:v.time,duration:v.duration},heartbeat:Date.now()});
-    if(videoTrack.stalled)throw new Error('Videon har inte gått framåt på 30 sekunder. Starta den med Spela upp video i Sales Coach och kör momentet igen.');
-    if(v.paused&&playAttempts<2){playAttempts++;this.report('Försöker starta videon ('+playAttempts+'/2).');await this.act(video,'play');}
+    if(videoTrack.stalled){const e=new Error('Webbläsaren kräver ett klick för att starta videon. Öppna momentet, tryck Play och starta autopiloten igen.');e.code='USER_GESTURE_REQUIRED';throw e;}
+    if(v.paused&&playAttempts<2){playAttempts++;this.report('Försöker starta videon ('+playAttempts+'/2).');try{await this.act(video,'play');}catch(error){if(/play\(\)|notallowed|user gesture|interact/i.test(error.message||'')){const e=new Error('Webbläsaren blockerade automatisk uppspelning. Öppna momentet, tryck Play och starta autopiloten igen.');e.code='USER_GESTURE_REQUIRED';throw e;}throw error;}}
     await this.sleep(2000);idle=0;continue;
    }
    const section=frames.find(f=>f.result.sections.some(t=>!expanded.has(f.frameId+'|'+t)));
@@ -250,10 +260,10 @@ export class Autopilot {
    await this.guard();const entry=pages.shift(),key=new URL(entry.url).pathname+(entry.button?'|'+entry.button:'');if(seen.has(key))continue;seen.add(key);
    try{
    await this.navigate(entry.url);
-   if(entry.button){await this.guard();await this.api.scripting.executeScript({target:{tabId:this.tabId,frameIds:[0]},func:catalogPage,args:[{open:entry.button}]});await this.sleep(1500);const destination=await this.api.tabs.get(this.tabId);if(!isCoachURL(destination.url)||!/^\/home\/achievements\/unearned\/\d+$/.test(new URL(destination.url).pathname))throw new Error('Prestationsknappen öppnade inte en stödd sida.');this.expectedURL=destination.url;await this.navigate(destination.url);}
+   if(entry.button){await this.guard();await this.script({target:{tabId:this.tabId,frameIds:[0]},func:catalogPage,args:[{open:entry.button}]},{attempts:1});await this.sleep(1500);const destination=await this.api.tabs.get(this.tabId);if(!isCoachURL(destination.url)||!/^\/home\/achievements\/unearned\/\d+$/.test(new URL(destination.url).pathname))throw new Error('Prestationsknappen öppnade inte en stödd sida.');this.expectedURL=destination.url;await this.navigate(destination.url);}
    const inventory=await this.inventory();
    if(academy&&new URL(entry.url).pathname===new URL(ACADEMY_URL).pathname){const p=inventory?.progress;this.academyAudit.rootComplete=!!p&&p.total>0&&p.completed===p.total;}
-   const found=await this.api.scripting.executeScript({target:{tabId:this.tabId,allFrames:true},func:catalogPage});
+   const found=await this.script({target:{tabId:this.tabId,allFrames:true},func:catalogPage});
    if(academy)this.academyAudit.blocked.push(...found.flatMap(f=>f.result?.lockedItems||[]));
    const links=found.flatMap(f=>f.result?.links||[]);const parent=/\/home\/(?:achievements\/unearned\/\d+|collection\/[^/]+|program\/\d+\/\d+)$/.test(new URL(this.expectedURL).pathname)?this.expectedURL:null;
    if(academy){
@@ -275,14 +285,18 @@ export class Autopilot {
    }else addCandidates(queue,candidates,parent,academy);
    await publish();
    if(entry.depth<(academy?6:3))for(const link of links)if(link.kind!=='resource'&&!link.locked&&(academy?academyChild(link):!link.completed&&!new URL(link.url).pathname.startsWith('/home/program/7047/'))&&!seen.has(new URL(link.url).pathname+(link.button?'|'+link.button:'')))pages.push({url:link.url,button:link.button,depth:entry.depth+1});
-   }catch(e){if(e.code!=='ACCESS_DENIED')throw e;if(academy)this.academyAudit.blocked.push('Åtkomst saknas: '+entry.url.split('?')[0]);this.report('Åtkomst saknas för '+entry.url.split('?')[0]+'. Fortsätter med tillgängliga moment.');}
+   }catch(e){
+    if(['PAGE_CHANGED','TRANSIENT_FRAME'].includes(e.code)&&(entry.retries||0)<2){entry.retries=(entry.retries||0)+1;seen.delete(key);pages.unshift(entry);this.report('Sales Coach bytte sida under sökningen. Försöker samma katalog igen.');continue;}
+    if(e.code!=='ACCESS_DENIED'&&!['PAGE_CHANGED','TRANSIENT_FRAME'].includes(e.code))throw e;
+    if(academy)this.academyAudit.blocked.push((e.code==='ACCESS_DENIED'?'Åtkomst saknas: ':'Sidan kunde inte läsas stabilt: ')+entry.url.split('?')[0]);this.report((e.code==='ACCESS_DENIED'?'Åtkomst saknas för ':'Kunde inte läsa ')+entry.url.split('?')[0]+'. Fortsätter med tillgängliga moment.');
+   }
   }
   if(academy&&(pages.length||queue.length>=100))this.academyAudit.blocked.push('Inventeringens gräns nåddes.');
  }
  async discoverAndRun(){
   const [tab]=await this.api.tabs.query({active:true,currentWindow:true});if(!tab?.id||!isCoachURL(tab.url))throw new Error('Öppna Sales Coach och logga in först.');
   this.tabId=tab.id;this.expectedURL=tab.url;const queue=[];
-  const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,key,status,reason,kind,academy,inputQuestion})=>({title,key,status,reason,kind,academy,inputQuestion})),queueUpdatedAt:Date.now()});};
+  const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,url,key,status,reason,kind,academy,inputQuestion})=>({title,url,key,status,reason,kind,academy,inputQuestion})),queueUpdatedAt:Date.now()});};
   this.report('Academy först: söker nästa ogjorda moment och börjar direkt.');
   for(let pass=0;pass<20;pass++){
    const completedBefore=queue.filter(i=>i.academy&&i.status==='Registrerad klar').length;
@@ -307,6 +321,14 @@ export class Autopilot {
   await this.processQueue(other,publish);
   this.report('Kön genomgången: '+queue.filter(i=>i.status==='Registrerad klar').length+' registrerade klara, '+queue.filter(i=>i.status!=='Registrerad klar').length+' behöver kontroll.');
  }
+ async verifyCompletion(item,{attempts=6,delays=[1500,2500,4000,6000,8000]}={}){
+  const parents=[...new Set(item.parents||[])];if(!parents.length)return false;
+  for(let attempt=0;attempt<attempts;attempt++){
+   for(const parent of parents){await this.navigate(parent);const page=await this.inventory();if(page.earned||page.items.some(i=>{try{return new URL(i.url).pathname===item.key&&i.completed;}catch{return false;}}))return true;}
+   if(attempt<attempts-1){const delay=delays[Math.min(attempt,delays.length-1)]||1500;this.report('Sales Coach har ännu inte registrerat '+item.title+'. Kontrollerar igen ('+(attempt+2)+'/'+attempts+').');this.onStatus({phase:'Väntar på registrering från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(delay);}
+  }
+  return false;
+ }
  async processQueue(queue,publish){
   if(queue.some(i=>i.academy)&&queue.some(i=>!i.academy))throw new Error('Academy och övriga resurser måste köras i separata, verifierade faser.');
   queue.splice(0,queue.length,...prioritizeResources(queue));const videos=[];
@@ -324,10 +346,9 @@ export class Autopilot {
     item.kind=capability.kind;item.status='Kör';item.reason='';await publish();this.report('Kör '+capability.kind.toLowerCase()+': '+item.title);
     this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(item.title);this.testParents=item.parents;const result=await this.resource({deferVideos:!videoPhase});
     if(result==='deferred-video'){await defer([]);await publish();return;}
-    let verified=false;
-    for(const parent of item.parents){await this.navigate(parent);const p=await this.inventory();if(p.earned||p.items.some(i=>new URL(i.url).pathname===item.key&&i.completed)){verified=true;break;}}
-    item.status=verified?'Registrerad klar':'Ej verifierad';item.reason=verified?'':'Bearbetad, men Sales Coach har inte bekräftat slutförande.';this.report(item.title+': '+item.status);
-   }catch(e){await this.guard();item.status=e.code==='USER_INPUT_REQUIRED'?'Behöver dina uppgifter':e.code==='ACCESS_DENIED'?'Åtkomst saknas':'Behöver hjälp';if(e.request)item.inputQuestion=e.request.question;item.reason=e.message;this.report('Går vidare från '+item.title+': '+e.message);}
+    const verified=await this.verifyCompletion(item);
+    item.status=verified?'Registrerad klar':'Ej verifierad';item.reason=verified?'':result==='submitted-pending'?'Svar inskickat, men varken resultatvyn eller samlingen bekräftade registreringen efter flera kontroller.':'Bearbetad, men Sales Coach har inte bekräftat slutförande efter flera kontroller.';this.report(item.title+': '+item.status);
+   }catch(e){if(['ACCESS_DENIED','PAGE_CHANGED','TRANSIENT_FRAME'].includes(e.code)){if(this.stopped)throw new Error('Stoppad av dig.');const tab=await this.api.tabs.get(this.tabId);if(!tab.active||!isCoachURL(tab.url))throw new Error('Pausad eftersom du bytte flik eller sida.');this.expectedURL=tab.url;}else await this.guard();item.status=e.code==='USER_INPUT_REQUIRED'?'Behöver dina uppgifter':e.code==='USER_GESTURE_REQUIRED'?'Behöver ett klick':e.code==='ACCESS_DENIED'?'Åtkomst saknas':['PAGE_CHANGED','TRANSIENT_FRAME'].includes(e.code)?'Ej verifierad':'Behöver hjälp';if(e.request)item.inputQuestion=e.request.question;item.reason=e.message;this.report('Går vidare från '+item.title+': '+e.message);}
    await publish();
   };
   for(const item of [...queue])if(!videos.includes(item))await execute(item,false);
@@ -342,13 +363,12 @@ export class Autopilot {
   if(badge){
    if(p.earned){this.report('Prestationen är redan registrerad som klar.');return;}
    const pending=p.items.filter(i=>!i.completed&&!i.locked);if(!pending.length)throw new Error('Inga öppna moment hittades. Låsta moment måste låsas upp i Sales Coach.');
-   for(const item of pending){this.report('Öppnar '+item.title);await this.navigate(item.url);await this.resource();await this.navigate(p.url);const check=await this.inventory();const current=check.items.find(i=>new URL(i.url).pathname===new URL(item.url).pathname);if(!check.earned&&!current?.completed)throw new Error('Sales Coach har inte registrerat momentet som klart: '+item.title);this.report('Registrerat klart: '+item.title);}
+   for(const item of pending){this.report('Öppnar '+item.title);await this.navigate(item.url);await this.resource();const verified=await this.verifyCompletion({title:item.title,key:new URL(item.url).pathname,parents:[p.url]});if(!verified)throw new Error('Sales Coach har inte registrerat momentet som klart efter flera kontroller: '+item.title);this.report('Registrerat klart: '+item.title);}
    const final=await this.inventory();if(!final.earned&&final.items.some(i=>!i.completed))throw new Error('Fler moment återstår, exempelvis låsta resurser.');this.report('Prestationens moment är registrerade som klara.');
   }else if(/\/content\/view\//.test(new URL(p.url).pathname)){
    this.testParents=new URL(tab.url).searchParams.getAll('backTo').filter(v=>/^\/home\/collection\/[^/?]+$/.test(v)).map(v=>new URL(v,'https://salescoach.apple.com').href);if(!this.testParents.length){const known=KNOWN_TESTS[new URL(tab.url).pathname];if(known)this.testParents=[known.parent];}this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(p.title);this.report('Bearbetar den öppna kursen.');await this.resource();await this.inventory();
    if(this.testParents?.length){
-    const testPath=new URL(p.url).pathname;let verified=false;
-    for(const parent of this.testParents){await this.navigate(parent);const result=await this.inventory();if(result.items.some(i=>new URL(i.url).pathname===testPath&&i.completed)){verified=true;break;}}
+    const testPath=new URL(p.url).pathname;const verified=await this.verifyCompletion({title:p.title,key:testPath,parents:this.testParents});
     if(!verified)throw new Error('Testet har bearbetats men Sales Coach har ännu inte registrerat det som klart.');
     this.report('Kunskapstestet är registrerat som klart i Sales Coach.');
    }else this.report('Inga fler igenkända steg. Kontrollera slutförandestatus på prestationssidan.');
