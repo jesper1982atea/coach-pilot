@@ -123,8 +123,8 @@ export function validateAnswer(raw,state,context){
  if(ids.some(n=>!Number.isInteger(n)||!state.options.some(o=>o.id===n&&!o.disabled))||new Set(ids).size!==ids.length||(!state.multi&&ids.length!==1)||(state.requiredCount!=null&&ids.length!==state.requiredCount))throw new Error('AI-svaret passar inte frågans alternativ.');
  if(Array.isArray(result.sourceIds)&&context.startsWith('KÄLLOR MED ID\n')){
   const passages=new Map(context.split('\n').slice(1).map(line=>{const match=line.match(/^\[K(\d+)\] (.+)$/);return match?[Number(match[1]),match[2]]:[null,null];}));
-  if(!result.sourceIds.length||result.sourceIds.some(id=>!Number.isInteger(id)||!passages.has(id))||new Set(result.sourceIds).size!==result.sourceIds.length)throw new Error('AI-svaret anger en källreferens som inte finns.');
-  return {ids:[...ids].sort((a,b)=>a-b),evidence:result.sourceIds.map(id=>passages.get(id)).join('\n'),reason:String(result.reason||'').slice(0,1000)};
+  if(!result.sourceIds.length||result.sourceIds.some(id=>!Number.isInteger(id)||!passages.has(id)))throw new Error('AI-svaret anger en källreferens som inte finns.');
+  return {ids:[...ids].sort((a,b)=>a-b),evidence:[...new Set(result.sourceIds)].map(id=>passages.get(id)).join('\n'),reason:String(result.reason||'').slice(0,1000)};
  }
  const normalize=s=>s.replace(/\s+/g,' ').trim().toLocaleLowerCase('sv');
  if(typeof result.evidence!=='string'||result.evidence.trim().length<20||!normalize(context).includes(normalize(result.evidence)))throw new Error('AI-svaret saknar ett verifierbart citat ur kursunderlaget.');
@@ -205,7 +205,7 @@ export class Autopilot {
    parent=found.find(i=>i.key===new URL(testURL).pathname)?.parents.find(p=>/^\/home\/collection\//.test(new URL(p).pathname));
   }
   if(!parent){await this.navigate(testURL);throw new Error('Testets samling hittades inte. Öppna testet från sin samling och prova igen.');}
-  this.testParents=[new URL(parent,'https://salescoach.apple.com').href];this.context='';let sources=0;
+  this.testParents=[new URL(parent,'https://salescoach.apple.com').href];let sources=0;
   this.report('Läser tillgängligt kursunderlag i testets samling…');
   try{
    await this.navigate(new URL(parent,'https://salescoach.apple.com').href);
@@ -215,7 +215,7 @@ export class Autopilot {
     const expanded=new Set();
     for(let step=0;step<30;step++){
      const frames=await this.frames();
-     if(frames.some(f=>f.result.options.length||f.result.freeText))break;
+     if(frames.some(f=>f.result.freeText))break;
      for(const f of frames)if(!f.result.video){if(f.result.lesson?.length>60)sources++;this.context=(this.context+'\n'+f.result.lesson).split('\n').filter((v,i,a)=>v&&a.indexOf(v)===i).join('\n').slice(-100000);}
      const frame=frames.find(f=>!f.result.video&&(f.result.sectionControls||f.result.sections.map((text,id)=>({id:id+1,text}))).some(s=>!expanded.has(f.frameId+'|'+s.id+'|'+s.text)));
      if(!frame)break;
