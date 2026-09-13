@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {queueProgress,trackVideo,duration} from '../src/run-progress.js';
 test('Attempted progress is separate from verified completion',()=>{assert.deepEqual(queueProgress([{status:'Registrerad klar'},{status:'Behöver hjälp'},{status:'Kör',title:'Video'},{status:'Video sist'}]),{total:4,processed:2,complete:1,needsHelp:1,percent:50,current:'Video'});assert.equal(queueProgress([]).percent,null);});
 test('A video waiting for a user gesture counts as reviewed',()=>{assert.deepEqual(queueProgress([{status:'Behöver ett klick'}]),{total:1,processed:1,complete:0,needsHelp:1,percent:100,current:''});});
+test('A quiz waiting for the learner counts as reviewed but incomplete',()=>{assert.deepEqual(queueProgress([{status:'Besvara provet'}]),{total:1,processed:1,complete:0,needsHelp:1,percent:100,current:''});});
 test('Video watchdog detects no movement despite repeated playback attempts',()=>{let s=trackVideo(null,{time:0},1000);s=trackVideo(s,{time:0},30999);assert.equal(s.stalled,false);assert.equal(trackVideo(s,{time:0},31000).stalled,true);assert.equal(trackVideo(s,{time:2},31000).stalled,false);});
 test('Time labels support long videos',()=>{assert.equal(duration(65),'1:05');assert.equal(duration(3601),'60:01');});

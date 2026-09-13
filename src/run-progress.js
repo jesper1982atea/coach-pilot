@@ -1,4 +1,4 @@
-const terminal=new Set(['Registrerad klar','Ej verifierad','Behöver hjälp','Behöver ett klick','Behöver dina uppgifter','Åtkomst saknas']);
+const terminal=new Set(['Registrerad klar','Ej verifierad','Behöver hjälp','Behöver ett klick','Behöver dina uppgifter','Besvara provet','Åtkomst saknas']);
 export function queueProgress(queue){const total=queue.length,processed=queue.filter(i=>terminal.has(i.status)).length,complete=queue.filter(i=>i.status==='Registrerad klar').length;return {total,processed,complete,needsHelp:processed-complete,percent:total?Math.round(processed/total*100):null,current:queue.find(i=>['Kör','Kontrollerar'].includes(i.status))?.title||''};}
 export function duration(seconds){const s=Math.max(0,Math.floor(seconds||0));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
 export function trackVideo(previous,video,now){const advanced=!previous||video.time>previous.time+.05;const state={time:video.time,advancedAt:advanced?now:previous.advancedAt};return {...state,stalled:now-state.advancedAt>=30000};}

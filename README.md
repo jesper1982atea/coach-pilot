@@ -26,7 +26,7 @@ Paketbyggaren kräver macOS med Swift-kompilator. Versionsnumret finns i scripts
 
 ## Omfattning
 
-Tre svenska Academy-tester för Mac, iPad och iPhone verifierades med 100 % den 11 september 2026. Exakt innehållsmatchning krävs för de lokala svarstabellerna. Övriga frågor använder experimentellt AI-stöd och kan behöva manuell granskning. Det är ingen garanti för alla material eller framtida testversioner.
+Kunskapsprov hanteras som assisterade moment. Piloten läser tillgängligt kursmaterial och förbereder ett förslag med förklaring och källstöd. Användaren granskar, väljer och skickar själv in svaren i Sales Coach.
 
 Källkod publiceras för insyn. Ingen separat öppen källkodslicens har valts.
 
@@ -40,7 +40,7 @@ Piloten bygger inte längre en fullständig inventering innan arbetet börjar. N
 
 ## Stabilare körning (från 0.5.7)
 
-Tillfälligt utbytta Sales Coach-ramar återansluts automatiskt och avbryter inte längre hela sökningen. Efter läsning eller inskickat test kontrolleras samlingen flera gånger eftersom registreringen kan dröja. Om Edge kräver ett användarklick för video visas **Behöver ett klick** med en knapp som öppnar rätt video; tryck Play och starta sedan autopiloten igen.
+Tillfälligt utbytta Sales Coach-ramar återansluts automatiskt och avbryter inte längre hela sökningen. Efter genomförda läsmoment kontrolleras samlingen eftersom registreringen kan dröja. Om Edge kräver ett användarklick för video visas **Behöver ett klick** med en knapp som öppnar rätt video; tryck Play och starta sedan autopiloten igen.
 
 ## Kompletta specialistmärken (från 0.5.8)
 
@@ -48,7 +48,7 @@ Långa workshopkurser på `/home/course/...` räknas nu som krav och visas i kö
 
 ## Testomförsök (från 0.5.9)
 
-Piloten känner igen Sales Coach-resultat som **33 % – Gå igenom dina svar och försök igen**. Ett underkänt test granskas mot kursmaterialet och kan försökas igen högst fyra gånger. Samma underkända svarskombination skickas aldrig in två gånger. Implementeringsresan för Mac (`475822`) har en innehållsmatchad svarstabell som verifierades med 100 % den 11 september 2026.
+Piloten känner igen Sales Coach-resultat som **33 % – Gå igenom dina svar och försök igen** och kan öppna ett nytt försök. Den ändrar inte svarsalternativ och skickar inte in provet. Ett nytt källbaserat studieförslag visas i panelen för användarens granskning.
 
 ## Bekräftad kursgenomgång (från 0.6.0)
 
@@ -62,4 +62,8 @@ Piloten rullar stegvis genom både sidan och inre rullbara kursytor. Nya och nä
 
 Ofärdiga moment sparas lokalt i Edge mellan körningar med status, orsak, länk och antal försök. Bestående inbjudningskrav och moment som behöver personliga uppgifter hoppas över direkt i senare autopilotkörningar. Panelen visar dem under **Återstår** med en knapp för att öppna sidan och begära en ny kontroll. När Sales Coach senare registrerar momentet som klart tas det automatiskt bort ur listan.
 
-Kunskapstestet **Mac – Möjligheter med uppgradering** (`475834`) har innehållsmatchade svar som verifierades med **100 % och 23 XP** den 11 september 2026. Efter **Försök igen** väntar piloten nu på att den gamla resultatramen verkligen ska ersättas innan ett nytt svar analyseras.
+## Assisterat provläge och snabbare hinder (från 0.8.0)
+
+Alla identifierade flervalsprov får ett sparat studieförslag med fråga, föreslagna alternativ, förklaring och källstöd. Panelen visar **Besvara provet** och länkar direkt till rätt sida. Piloten väljer eller skickar aldrig in svar, och fortsätter med nästa resurs medan provet väntar.
+
+Eventkurser väntar några sekunder på Sales Coach besked innan de klassificeras. Text om att kursuppgifterna kräver en eventinbjudan sparas direkt som **Åtkomst saknas**. Vanliga lässidor utan XP eller success får en kort registreringskontroll i stället för sex långa omgångar, vilket minskar tiden då körningen ser ut att ha fastnat.
