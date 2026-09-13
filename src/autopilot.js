@@ -44,7 +44,9 @@ export function courseFrame(command = {}) {
   const multi=members.some(e=>e.type==='checkbox'||e.getAttribute('role')==='checkbox');
   const count=prompt.match(/(?:välj|select|choose)\s+(ett|en|one|\d+)/i);
   const requiredCount=count ? (/^\d+$/.test(count[1])?Number(count[1]):1) : (multi?null:1);
-  return {prompt,options:opts,multi,requiredCount};
+  const feedbackNodes=[...container.querySelectorAll('[role="alert"],.feedback,[class*="feedback"],[class*="Feedback"],[aria-label]')].filter(visible);
+  const questionFeedback=clean(feedbackNodes.map(e=>e.getAttribute('aria-label')||label(e)).filter(t=>/incorrect|correct|fel svar|rätt svar|inte rätt|inte korrekt|korrekt/i.test(t)).join(' ')).slice(0,1000);
+  return {prompt,options:opts,multi,requiredCount,feedback:questionFeedback};
  });
  const prompt=questions[0]?.prompt||'',multi=questions[0]?.multi||false;
  const groups=questions.length;
@@ -173,21 +175,23 @@ export class Autopilot {
  }
  testKey(state){const target=new URL(this.expectedURL);return target.origin+target.pathname+'|'+(state.questions?.length?JSON.stringify(state.questions.map(q=>[q.prompt.replace(/^\d+[.)]?\s+/,''),q.options.map(o=>o.text).sort(),q.multi,q.requiredCount]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))):state.fingerprint);}
  answerSignature(state,ids){return JSON.stringify((state.questions?.length?state.questions:[state]).map(q=>[q.prompt?.replace(/^\d+[.)]?\s+/,''),q.options.filter(o=>ids.includes(o.id)).map(o=>o.text).sort()]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));}
+ questionFeedback(result,state){return (state.questions?.length?state.questions:[state]).map(q=>{const signature=JSON.stringify(q.options.map(o=>o.text).sort());const matches=(result.questions||[]).filter(r=>JSON.stringify(r.options.map(o=>o.text).sort())===signature);return {prompt:q.prompt,feedback:matches.length===1?matches[0].feedback||'':''};});}
  rememberSubmission(state,ids){const key=this.testKey(state);this.lastSubmissions.set(new URL(this.expectedURL).pathname,{key,state,ids});this.submitted.add(key);}
  failedSubmission(state){return this.lastSubmissions.get(new URL(this.expectedURL).pathname)||{key:this.testKey(state),state,ids:state.options.filter(o=>o.selected).map(o=>o.id)};}
  beginRetry(key){const path=new URL(this.expectedURL).pathname,count=this.retryCounts.get(path)||0;if(count>=this.maxTestAttempts-1)throw new Error('Gränsen på '+this.maxTestAttempts+' provförsök är nådd. Momentet sparas för uppföljning.');this.retryCounts.set(path,count+1);this.submitted.delete(key);const previous=this.lastSubmissions.get(path);if(previous)this.submitted.delete(previous.key);this.retrying.set(path,0);}
- async solve(frame){
+ async solve(frame,revised=false){
   const s=frame.result;if(s.groups>1)return this.solveTest(frame);if(s.freeText||!s.prompt||s.options.length<2||s.options.length>12||s.options.some(o=>!o.text))throw new Error('Den här frågetypen behöver granskas manuellt.');
   const key=this.testKey(s);if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
   const context=relevantContext(this.context,s.prompt,5500);if(context.trim().length<60)throw new Error('Kursunderlag saknas för att besvara frågan. Läs materialet först.');
   this.report('Läser frågan och ber Apple Intelligence om svar…');
   const previous=this.failedAttempts.get(key)||[];
-  const history=previous.length?'\nTidigare svar '+previous.map(a=>(a.choices||a.ids).join(' + ')+' gav '+(a.score==null?'underkänt resultat':a.score+' %')).join('; ')+'. Granska frågan på nytt mot källan och upprepa inte ett underkänt svar.':'';
-  const question=s.prompt+'\n'+s.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(s.multi?'Flera alternativ kan vara rätt.':'Exakt ett alternativ ska väljas.')+history;
+  const detail=previous.flatMap(a=>(a.feedback||[]).filter(f=>f.prompt===s.prompt&&f.feedback).map(f=>f.feedback)).join(' | ');
+  const history=(detail?'\nSales Coach återkoppling för frågan: '+detail:'')+(previous.length?'\nTidigare svar '+previous.map(a=>(a.choices||a.ids).join(' + ')+' gav '+(a.score==null?'underkänt resultat':a.score+' %')).join('; ')+'. Granska frågan på nytt mot källan och upprepa inte ett underkänt svar.':'');
+  const question=s.prompt+'\n'+s.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(s.multi?'Flera alternativ kan vara rätt.':'Exakt ett alternativ ska väljas.')+history+(revised?'\nFörra AI-analysen upprepade en underkänd svarskombination. Kontrollera varje alternativ på nytt och korrigera slutsatsen utifrån underlaget och återkopplingen.':'');
   if(question.length>2000)throw new Error('Frågan är för lång för den lokala bryggan.');
   const reply=await this.native({action:'choose',context,question});await this.guard();if(!reply.ok)throw new Error(reply.error||reply.message||'AI-anropet misslyckades.');
   const answer=validateAnswer(reply.text,s,context);this.report('AI föreslår '+answer.ids.join(', ')+': '+answer.reason);
-  if(previous.some(a=>(a.signature?a.signature===this.answerSignature(s,answer.ids):JSON.stringify(a.ids)===JSON.stringify(answer.ids))))throw new Error('Apple Intelligence upprepade ett redan underkänt svar. Inget nytt svar skickades in.');
+  if(previous.some(a=>(a.signature?a.signature===this.answerSignature(s,answer.ids):JSON.stringify(a.ids)===JSON.stringify(answer.ids)))){if(!revised){this.report('AI upprepade ett felaktigt svar. Begär en fördjupad analys före inlämning.');return this.solve(frame,true);}throw new Error('Apple Intelligence upprepade ett redan underkänt svar efter fördjupad analys. Inget nytt svar skickades in.');}
   let fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades medan AI arbetade.');
   for(const option of s.options){const selected=answer.ids.includes(option.id);if(fresh.result.options.find(o=>o.id===option.id)?.selected!==selected){await this.act(fresh,'select',{id:option.id,text:option.text,selected});fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades när svar valdes.');}}
   this.rememberSubmission(s,answer.ids);await this.act(fresh,'submit',{ids:answer.ids});this.report('Svar inskickat. Kontrollerar återkopplingen.');
@@ -224,7 +228,7 @@ export class Autopilot {
   for(let attempt=0;attempt<40;attempt++){const ready=await this.frames();if(ready.some(f=>f.result.groups>0))return;await this.sleep(500);}
   throw new Error('Testfrågorna laddades inte efter återgången från kursmaterialet.');
  }
- async solveTest(frame){
+ async solveTest(frame,revised=false){
   const s=frame.result,questions=s.questions;
   if(s.freeText||!questions?.length||questions.length>20||questions.some(q=>!q.prompt||q.options.length<2||q.options.length>12||q.options.some(o=>!o.text)))throw new Error('Testets frågor behöver granskas manuellt.');
   const key=this.testKey(s);
@@ -236,8 +240,9 @@ export class Autopilot {
    if(context.trim().length<60)throw new Error('Kursunderlag saknas för kunskapstestet. Läs kursmaterialet först.');
    this.report('Kunskapstest: analyserar fråga '+(index+1)+' av '+questions.length+'…');
    const prior=attempts.map(a=>({score:a.score,answers:a.choices?q.options.flatMap((o,i)=>a.choices.includes(o.text)?[i+1]:[]):a.ids.filter(id=>q.options.some(o=>o.id===id)).map(id=>q.options.findIndex(o=>o.id===id)+1)})).filter(a=>a.answers.length);
-   const history=prior.length?'\nTidigare fullständiga försök blev underkända: '+prior.map(a=>'den här frågan hade '+a.answers.join('+')+' och totalresultatet blev '+a.score+' %').join('; ')+'. Granska varje påstående på nytt mot källan. Den fullständiga underkända kombinationen får inte upprepas.':'';
-   const question=q.prompt+'\n'+local.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(q.requiredCount?'Välj exakt '+q.requiredCount+' alternativ.':q.multi?'Flera alternativ kan vara rätt.':'Välj ett alternativ.')+history;
+   const detail=attempts.flatMap(a=>(a.feedback||[]).filter(f=>f.prompt===q.prompt&&f.feedback).map(f=>f.feedback)).join(' | ');
+   const history=(detail?'\nSales Coach återkoppling för frågan: '+detail:'')+(prior.length?'\nTidigare fullständiga försök blev underkända: '+prior.map(a=>'den här frågan hade '+a.answers.join('+')+' och totalresultatet blev '+a.score+' %').join('; ')+'. Granska varje påstående på nytt mot källan. Den fullständiga underkända kombinationen får inte upprepas.':'');
+   const question=q.prompt+'\n'+local.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(q.requiredCount?'Välj exakt '+q.requiredCount+' alternativ.':q.multi?'Flera alternativ kan vara rätt.':'Välj ett alternativ.')+history+(revised?'\nFörra AI-analysen upprepade en underkänd svarskombination. Kontrollera varje alternativ på nytt och korrigera slutsatsen utifrån underlaget och återkopplingen.':'');
    if(question.length>1900)throw new Error('Frågan är för lång för den lokala bryggan.');
    let answer,lastError;
    for(let attempt=0;attempt<2;attempt++){
@@ -251,7 +256,7 @@ export class Autopilot {
   }
   // No page mutations until every question has a supported answer.
   const ids=answers.flatMap(a=>a.ids).sort((a,b)=>a-b);
-  if(attempts.some(a=>(a.signature?a.signature===this.answerSignature(s,ids):JSON.stringify(a.ids)===JSON.stringify(ids))))throw new Error('Apple Intelligence upprepade en redan underkänd svarskombination. Inget nytt försök skickades in.');
+  if(attempts.some(a=>(a.signature?a.signature===this.answerSignature(s,ids):JSON.stringify(a.ids)===JSON.stringify(ids)))){if(!revised){this.report('AI upprepade provsvaren. Begär en fördjupad analys med återkopplingen.');return this.solveTest(frame,true);}throw new Error('Apple Intelligence upprepade en redan underkänd svarskombination efter fördjupad analys. Inget nytt försök skickades in.');}
   const refresh=async()=>{
    for(let attempt=0;attempt<3;attempt++){
     const available=await this.frames(),matches=available.filter(f=>f.result.fingerprint===s.fingerprint);
@@ -275,14 +280,14 @@ export class Autopilot {
    if(result){
     const {key,state:submittedState,ids}=this.failedSubmission(result.result),attempts=this.failedAttempts.get(key)||[];
     if(this.retrying.has(new URL(this.expectedURL).pathname)){const waits=this.retrying.get(new URL(this.expectedURL).pathname)+1;this.retrying.set(new URL(this.expectedURL).pathname,waits);if(waits>40)throw new Error('Sales Coach laddade inte om frågorna efter Försök igen.');this.onStatus({phase:'Väntar på nya testfrågor',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}
-    if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:result.result.score,signature:this.answerSignature(submittedState,ids),choices:submittedState.options.filter(o=>ids.includes(o.id)).map(o=>o.text)});
+    if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:result.result.score,signature:this.answerSignature(submittedState,ids),feedback:this.questionFeedback(result.result,submittedState),choices:submittedState.options.filter(o=>ids.includes(o.id)).map(o=>o.text)});
     this.failedAttempts.set(key,attempts);this.submitted.delete(key);submissionWait=0;
     if(attempts.length>=this.maxTestAttempts)throw new Error('Sales Coach visar '+result.result.score+' procent efter '+attempts.length+' olika försök. Testet pausas för granskning.');
     if(result.result.retry){this.report('Sales Coach visar '+result.result.score+' procent. Försök '+(attempts.length+1)+' av '+this.maxTestAttempts+' granskar svaren på nytt.');this.onStatus({phase:'Granskar om underkänt test ('+(attempts.length+1)+'/'+this.maxTestAttempts+')',heartbeat:Date.now(),media:null});this.beginRetry(key);await this.act(result,'retry');idle=0;continue;}
     throw new Error('Sales Coach visar '+result.result.score+' procent men erbjuder inget säkert omförsök.');
    }
    const failed=frames.find(f=>f.result.failed);
-   if(failed?.result.retry){const {key,state:submittedState,ids}=this.failedSubmission(failed.result);if(this.retrying.has(new URL(this.expectedURL).pathname)){const waits=this.retrying.get(new URL(this.expectedURL).pathname)+1;this.retrying.set(new URL(this.expectedURL).pathname,waits);if(waits>40)throw new Error('Sales Coach laddade inte om frågorna efter Försök igen.');await this.sleep(500);continue;}const attempts=this.failedAttempts.get(key)||[];if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:null,signature:this.answerSignature(submittedState,ids),choices:submittedState.options.filter(o=>ids.includes(o.id)).map(o=>o.text)});this.failedAttempts.set(key,attempts);this.submitted.delete(key);if(attempts.length>=this.maxTestAttempts)throw new Error('Testet är fortfarande underkänt efter '+attempts.length+' olika försök.');this.report('Sales Coach visar fel svar. Granskar svaren på nytt.');this.beginRetry(key);await this.act(failed,'retry');idle=0;continue;}
+   if(failed?.result.retry){const {key,state:submittedState,ids}=this.failedSubmission(failed.result);if(this.retrying.has(new URL(this.expectedURL).pathname)){const waits=this.retrying.get(new URL(this.expectedURL).pathname)+1;this.retrying.set(new URL(this.expectedURL).pathname,waits);if(waits>40)throw new Error('Sales Coach laddade inte om frågorna efter Försök igen.');await this.sleep(500);continue;}const attempts=this.failedAttempts.get(key)||[];if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:null,signature:this.answerSignature(submittedState,ids),feedback:this.questionFeedback(failed.result,submittedState),choices:submittedState.options.filter(o=>ids.includes(o.id)).map(o=>o.text)});this.failedAttempts.set(key,attempts);this.submitted.delete(key);if(attempts.length>=this.maxTestAttempts)throw new Error('Testet är fortfarande underkänt efter '+attempts.length+' olika försök.');this.report('Sales Coach visar fel svar. Granskar svaren på nytt.');this.beginRetry(key);await this.act(failed,'retry');idle=0;continue;}
    if(failed)throw new Error('Sales Coach visar fel svar och erbjuder inget säkert omförsök.');
    const rewarded=all.find(s=>s.xp>0||s.success);if(rewarded){this.report(rewarded.xp>0?'Sales Coach bekräftar '+rewarded.xp+' intjänade erfarenhetspoäng.':'Sales Coach visar att momentet är slutfört.');return 'passed';}
    const request=inputRequest(frames);if(request){const e=new Error(request.reason);e.code='USER_INPUT_REQUIRED';e.request=request;throw e;}
