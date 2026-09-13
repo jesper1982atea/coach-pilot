@@ -26,7 +26,7 @@ Paketbyggaren kräver macOS med Swift-kompilator. Versionsnumret finns i scripts
 
 ## Omfattning
 
-Kunskapsprov hanteras som assisterade moment. Piloten läser tillgängligt kursmaterial och förbereder ett förslag med förklaring och källstöd. Användaren granskar, väljer och skickar själv in svaren i Sales Coach.
+Kunskapsprov hanteras automatiskt av Apple Intelligence när källunderlag och tydliga flervalsfrågor finns. Piloten väljer och skickar in svar, läser resultatet och analyserar om underkända svar. Högst fyra försök per moment och körning; upprepade underkända kombinationer stoppas.
 
 Källkod publiceras för insyn. Ingen separat öppen källkodslicens har valts.
 
@@ -48,7 +48,7 @@ Långa workshopkurser på `/home/course/...` räknas nu som krav och visas i kö
 
 ## Testomförsök (från 0.5.9)
 
-Piloten känner igen Sales Coach-resultat som **33 % – Gå igenom dina svar och försök igen** och kan öppna ett nytt försök. Den ändrar inte svarsalternativ och skickar inte in provet. Ett nytt källbaserat studieförslag visas i panelen för användarens granskning.
+Piloten känner igen Sales Coach-resultat som **33 % – Gå igenom dina svar och försök igen** och kan öppna ett nytt försök. Apple Intelligence får återkoppling från tidigare försök och analyserar varje svar mot källmaterialet innan nästa inlämning. Totalpoängen behandlas inte som bevis för vilken enskild fråga som var fel.
 
 ## Bekräftad kursgenomgång (från 0.6.0)
 
@@ -62,8 +62,8 @@ Piloten rullar stegvis genom både sidan och inre rullbara kursytor. Nya och nä
 
 Ofärdiga moment sparas lokalt i Edge mellan körningar med status, orsak, länk och antal försök. Bestående inbjudningskrav och moment som behöver personliga uppgifter hoppas över direkt i senare autopilotkörningar. Panelen visar dem under **Återstår** med en knapp för att öppna sidan och begära en ny kontroll. När Sales Coach senare registrerar momentet som klart tas det automatiskt bort ur listan.
 
-## Assisterat provläge och snabbare hinder (från 0.8.0)
+## Provläge och snabbare hinder
 
-Alla identifierade flervalsprov får ett sparat studieförslag med fråga, föreslagna alternativ, förklaring och källstöd. Panelen visar **Besvara provet** och länkar direkt till rätt sida. Piloten väljer eller skickar aldrig in svar, och fortsätter med nästa resurs medan provet väntar.
+Från 0.9.0 körs stödda flervalsprov automatiskt. Alla frågor måste ha giltiga AI-svar med källstöd innan några alternativ väljs. Alternativens innehåll används för att känna igen gamla felaktiga svar även efter omsortering. Vid saknat underlag eller en upprepad underkänd kombination sparas momentet för uppföljning och kön fortsätter. Tidigare **Besvara provet**-poster återupptas automatiskt. Inga fasta facit används och godkänt resultat kan inte garanteras.
 
 Eventkurser väntar några sekunder på Sales Coach besked innan de klassificeras. Text om att kursuppgifterna kräver en eventinbjudan sparas direkt som **Åtkomst saknas**. Vanliga lässidor utan XP eller success får en kort registreringskontroll i stället för sex långa omgångar, vilket minskar tiden då körningen ser ut att ha fastnat.

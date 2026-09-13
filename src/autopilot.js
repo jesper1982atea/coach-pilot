@@ -88,7 +88,16 @@ export function courseFrame(command = {}) {
  if(!command.action)return state;
  if(command.url!==location.href||command.fingerprint!==fingerprint)throw new Error('Sidan ändrades före åtgärden.');
  const click=e=>{if(!e||!enabled(e))throw new Error('Kontrollen är inte tillgänglig.');e.scrollIntoView({block:'center'});e.click();return {acted:true};};
- if(command.action==='select'||command.action==='submit')throw new Error('Coach Pilot ändrar eller skickar inte in provsvar.');
+ if(command.action==='select'){
+  const option=options.find(o=>o.id===command.id),element=choices[command.id-1];
+  if(state.freeText||state.failed||!option||option.text!==command.text)throw new Error('Svarsalternativet ändrades eller kräver manuell input.');
+  if(option.selected===command.selected)return {acted:false};return click(element);
+ }
+ if(command.action==='submit'){
+  if(!state.submit||state.failed||state.freeText||!questions.length||questions.some(q=>{const n=q.options.filter(o=>o.selected).length;return !n||(q.requiredCount!=null&&n!==q.requiredCount);}))throw new Error('Inskickning stoppad: otydlig uppgift eller kontroll.');
+  if(JSON.stringify(options.filter(o=>o.selected).map(o=>o.id))!==JSON.stringify(command.ids))throw new Error('De valda svaren stämmer inte med förslaget.');
+  return click(submit[0]);
+ }
  if(command.action==='retry'){
   if(!state.retry||score===100)throw new Error('Omförsök är inte tillgängligt.');
   return click(retry[0]);
@@ -121,7 +130,7 @@ export function validateAnswer(raw,state,context){
 }
 
 export class Autopilot {
- constructor({api,native,report,onPage,onQueue,onStatus=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms))}){Object.assign(this,{api,native,report,onPage,onQueue,onStatus,wait});this.stopped=false;this.submitted=new Set();this.failedAttempts=new Map();this.retrying=new Map();this.issues=new Map();this.maxTestAttempts=4;this.context='';}
+ constructor({api,native,report,onPage,onQueue,onStatus=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms))}){Object.assign(this,{api,native,report,onPage,onQueue,onStatus,wait});this.stopped=false;this.submitted=new Set();this.failedAttempts=new Map();this.retrying=new Map();this.retryCounts=new Map();this.issues=new Map();this.maxTestAttempts=4;this.context='';}
  stop(){this.stopped=true;}
  async loadIssues(){const stored=await this.api.storage?.local?.get?.(['autopilotIssues','autopilotQueue'])||{};this.issues=new Map((stored.autopilotIssues||[]).filter(i=>i?.key).map(i=>[i.key,i]));let migrated=false;for(const item of stored.autopilotQueue||[])if(item?.key&&['Ej verifierad','Behöver hjälp','Behöver ett klick','Behöver dina uppgifter','Besvara provet','Åtkomst saknas'].includes(item.status)&&!this.issues.has(item.key)){const now=Date.now();this.issues.set(item.key,{...item,firstSeen:now,lastSeen:now,attempts:1});migrated=true;}if(migrated)await this.saveIssues();return this.issues;}
  async saveIssues(){await this.api.storage?.local?.set?.({autopilotIssues:[...this.issues.values()].sort((a,b)=>(b.lastSeen||0)-(a.lastSeen||0)).slice(0,100)});}
@@ -162,15 +171,24 @@ export class Autopilot {
   }
   const t=await this.api.tabs.get(this.tabId);if(new URL(t.url).pathname!==targetPath)throw new Error('Navigationen nådde inte den valda sidan.');this.expectedURL=t.url;
  }
+ testKey(state){const target=new URL(this.expectedURL);return target.origin+target.pathname+'|'+(state.questions?.length?JSON.stringify(state.questions.map(q=>[q.prompt.replace(/^\d+[.)]?\s+/,''),q.options.map(o=>o.text).sort(),q.multi,q.requiredCount]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))):state.fingerprint);}
+ answerSignature(state,ids){return JSON.stringify((state.questions?.length?state.questions:[state]).map(q=>[q.prompt?.replace(/^\d+[.)]?\s+/,''),q.options.filter(o=>ids.includes(o.id)).map(o=>o.text).sort()]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));}
+ beginRetry(key){const path=new URL(this.expectedURL).pathname,count=this.retryCounts.get(path)||0;if(count>=this.maxTestAttempts-1)throw new Error('Gränsen på '+this.maxTestAttempts+' provförsök är nådd. Momentet sparas för uppföljning.');this.retryCounts.set(path,count+1);this.retrying.set(key,0);}
  async solve(frame){
   const s=frame.result;if(s.groups>1)return this.solveTest(frame);if(s.freeText||!s.prompt||s.options.length<2||s.options.length>12||s.options.some(o=>!o.text))throw new Error('Den här frågetypen behöver granskas manuellt.');
+  const key=this.testKey(s);if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
   const context=relevantContext(this.context,s.prompt,5500);if(context.trim().length<60)throw new Error('Kursunderlag saknas för att besvara frågan. Läs materialet först.');
-  this.report('Provläge: läser frågan och tar fram ett källbaserat förslag…');
-  const question=s.prompt+'\n'+s.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(s.multi?'Flera alternativ kan vara rätt.':'Exakt ett alternativ ska väljas.');
+  this.report('Läser frågan och ber Apple Intelligence om svar…');
+  const previous=this.failedAttempts.get(key)||[];
+  const history=previous.length?'\nTidigare svar '+previous.map(a=>(a.choices||a.ids).join(' + ')+' gav '+(a.score==null?'underkänt resultat':a.score+' %')).join('; ')+'. Granska frågan på nytt mot källan och upprepa inte ett underkänt svar.':'';
+  const question=s.prompt+'\n'+s.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(s.multi?'Flera alternativ kan vara rätt.':'Exakt ett alternativ ska väljas.')+history;
   if(question.length>2000)throw new Error('Frågan är för lång för den lokala bryggan.');
   const reply=await this.native({action:'choose',context,question});await this.guard();if(!reply.ok)throw new Error(reply.error||reply.message||'AI-anropet misslyckades.');
-  const answer=validateAnswer(reply.text,s,context),studyGuide=[{prompt:s.prompt,suggestions:s.options.filter(o=>answer.ids.includes(o.id)).map(o=>o.text),reason:answer.reason,evidence:answer.evidence}];
-  this.report('Provet är förberett. Du väljer och skickar in svaret i Sales Coach.');const error=new Error('Provet väntar på att du granskar förslaget, väljer svar och skickar in det.');error.code='USER_QUIZ_REQUIRED';error.studyGuide=studyGuide;throw error;
+  const answer=validateAnswer(reply.text,s,context);this.report('AI föreslår '+answer.ids.join(', ')+': '+answer.reason);
+  if(previous.some(a=>(a.signature?a.signature===this.answerSignature(s,answer.ids):JSON.stringify(a.ids)===JSON.stringify(answer.ids))))throw new Error('Apple Intelligence upprepade ett redan underkänt svar. Inget nytt svar skickades in.');
+  let fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades medan AI arbetade.');
+  for(const option of s.options){const selected=answer.ids.includes(option.id);if(fresh.result.options.find(o=>o.id===option.id)?.selected!==selected){await this.act(fresh,'select',{id:option.id,text:option.text,selected});fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades när svar valdes.');}}
+  this.submitted.add(key);await this.act(fresh,'submit',{ids:answer.ids});this.report('Svar inskickat. Kontrollerar återkopplingen.');
  }
  async prepareTest(){
   const testURL=this.expectedURL;
@@ -207,25 +225,43 @@ export class Autopilot {
  async solveTest(frame){
   const s=frame.result,questions=s.questions;
   if(s.freeText||!questions?.length||questions.length>20||questions.some(q=>!q.prompt||q.options.length<2||q.options.length>12||q.options.some(o=>!o.text)))throw new Error('Testets frågor behöver granskas manuellt.');
-  const studyGuide=[];
+  const key=this.testKey(s);
+  if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
+  const attempts=this.failedAttempts.get(key)||[];const answers=[];
   for(const [index,q] of questions.entries()){
    const local={...q,options:q.options.map((o,i)=>({...o,id:i+1}))};
    const context=indexContext(relevantContext(this.context,q.prompt+' '+q.options.map(o=>o.text).join(' '),5000));
    if(context.trim().length<60)throw new Error('Kursunderlag saknas för kunskapstestet. Läs kursmaterialet först.');
-   this.report('Provläge: analyserar fråga '+(index+1)+' av '+questions.length+'…');
-   const question=q.prompt+'\n'+local.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(q.requiredCount?'Välj exakt '+q.requiredCount+' alternativ.':q.multi?'Flera alternativ kan vara rätt.':'Välj ett alternativ.');
+   this.report('Kunskapstest: analyserar fråga '+(index+1)+' av '+questions.length+'…');
+   const prior=attempts.map(a=>({score:a.score,answers:a.choices?q.options.flatMap((o,i)=>a.choices.includes(o.text)?[i+1]:[]):a.ids.filter(id=>q.options.some(o=>o.id===id)).map(id=>q.options.findIndex(o=>o.id===id)+1)})).filter(a=>a.answers.length);
+   const history=prior.length?'\nTidigare fullständiga försök blev underkända: '+prior.map(a=>'den här frågan hade '+a.answers.join('+')+' och totalresultatet blev '+a.score+' %').join('; ')+'. Granska varje påstående på nytt mot källan. Den fullständiga underkända kombinationen får inte upprepas.':'';
+   const question=q.prompt+'\n'+local.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(q.requiredCount?'Välj exakt '+q.requiredCount+' alternativ.':q.multi?'Flera alternativ kan vara rätt.':'Välj ett alternativ.')+history;
    if(question.length>1900)throw new Error('Frågan är för lång för den lokala bryggan.');
    let answer,lastError;
    for(let attempt=0;attempt<2;attempt++){
     const reply=await this.native({action:'choose',context,optionCount:local.options.length,requiredCount:q.requiredCount,question:question+(attempt?'\nAnvänd endast de listade numren. Kopiera citatet exakt ur underlaget.':'')});await this.guard();
-    if(!reply.ok){lastError=new Error(reply.error||'Apple Intelligence kunde inte ta fram ett förslag.');break;}
+    if(!reply.ok)throw new Error(reply.error||'AI-anropet misslyckades.');
     try{answer=validateAnswer(reply.text,local,context);break;}catch(e){lastError=e;this.report('Fråga '+(index+1)+': '+e.message+' [antal='+q.requiredCount+', alternativ='+local.options.length+', AI='+String(reply.text).slice(0,500)+']'+(attempt?'':' Försöker en gång till med förtydligat format.'));}
    }
-   if(!answer){studyGuide.push({prompt:q.prompt,suggestions:[],reason:'Inget säkert förslag kunde tas fram: '+lastError.message,evidence:''});continue;}
-   studyGuide.push({prompt:q.prompt,suggestions:answer.ids.map(id=>local.options[id-1].text),reason:answer.reason,evidence:answer.evidence});
-   this.report('Fråga '+(index+1)+': förslag och källstöd är redo.');
+   if(!answer)throw lastError;
+   answers.push({...answer,ids:answer.ids.map(id=>q.options[id-1].id)});
+   this.report('Fråga '+(index+1)+': väljer '+answer.ids.map(id=>local.options[id-1].text).join(' · '));
   }
-  this.report('Provet är förberett. Inga svar har valts eller skickats in.');const error=new Error('Provet väntar på att du granskar förslagen, väljer svar och skickar in dem.');error.code='USER_QUIZ_REQUIRED';error.studyGuide=studyGuide;throw error;
+  // No page mutations until every question has a supported answer.
+  const ids=answers.flatMap(a=>a.ids).sort((a,b)=>a-b);
+  if(attempts.some(a=>(a.signature?a.signature===this.answerSignature(s,ids):JSON.stringify(a.ids)===JSON.stringify(ids))))throw new Error('Apple Intelligence upprepade en redan underkänd svarskombination. Inget nytt försök skickades in.');
+  const refresh=async()=>{
+   for(let attempt=0;attempt<3;attempt++){
+    const available=await this.frames(),matches=available.filter(f=>f.result.fingerprint===s.fingerprint);
+    if(matches.length===1)return matches[0];
+    if(attempt===2){const current=available.find(f=>f.result.options?.length);this.report('Testkontroll: '+JSON.stringify({before:s.questions.map(q=>q.prompt),after:current?.result.questions?.map(q=>q.prompt)}));throw new Error('Testet ändrades medan AI arbetade.');}
+    await this.sleep(500);
+   }
+  };
+  let fresh=await refresh();
+  for(const option of s.options){const selected=ids.includes(option.id);if(fresh.result.options.find(o=>o.id===option.id)?.selected!==selected){await this.act(fresh,'select',{id:option.id,text:option.text,selected});fresh=await refresh();}}
+  this.submitted.add(key);await this.act(fresh,'submit',{ids});
+  this.report('Hela kunskapstestet inskickat. Kontrollerar återkopplingen.');
  }
  async resource({deferVideos=false}={}){
   const started=Date.now();let idle=0,steps=0,prepared=false,submissionWait=0,videoTrack=null,playAttempts=0;const expanded=new Set(),interacted=new Set(),scrolled=new Set(),navigation=new Map();
@@ -233,25 +269,25 @@ export class Autopilot {
    const frames=await this.frames();const all=frames.map(f=>f.result);
    if(deferVideos&&all.some(s=>s.video)){for(const f of frames)if(f.result.video&&!f.result.video.ended)await this.act(f,'pauseVideo');return 'deferred-video';}
    if(all.some(s=>s.score===100)){this.report('Sales Coach visar 100 procent på kunskapstestet.');return 'passed';}
-   const rewarded=all.find(s=>s.xp>0||s.success);if(rewarded){this.report(rewarded.xp>0?'Sales Coach bekräftar '+rewarded.xp+' intjänade erfarenhetspoäng.':'Sales Coach visar att momentet är slutfört.');return 'passed';}
    const result=frames.find(f=>f.result.score!=null&&f.result.score<100);
    if(result){
-    const key=this.expectedURL+'|'+result.result.fingerprint,ids=result.result.options.filter(o=>o.selected).map(o=>o.id).sort((a,b)=>a-b),attempts=this.failedAttempts.get(key)||[];
+    const key=this.testKey(result.result),ids=result.result.options.filter(o=>o.selected).map(o=>o.id).sort((a,b)=>a-b),attempts=this.failedAttempts.get(key)||[];
     if(this.retrying.has(key)){const waits=this.retrying.get(key)+1;this.retrying.set(key,waits);if(waits>40)throw new Error('Sales Coach laddade inte om frågorna efter Försök igen.');this.onStatus({phase:'Väntar på nya testfrågor',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}
-    if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:result.result.score});
+    if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:result.result.score,signature:this.answerSignature(result.result,ids),choices:result.result.options.filter(o=>ids.includes(o.id)).map(o=>o.text)});
     this.failedAttempts.set(key,attempts);this.submitted.delete(key);submissionWait=0;
     if(attempts.length>=this.maxTestAttempts)throw new Error('Sales Coach visar '+result.result.score+' procent efter '+attempts.length+' olika försök. Testet pausas för granskning.');
-    if(result.result.retry){this.report('Sales Coach visar '+result.result.score+' procent. Försök '+(attempts.length+1)+' av '+this.maxTestAttempts+' granskar svaren på nytt.');this.onStatus({phase:'Granskar om underkänt test ('+(attempts.length+1)+'/'+this.maxTestAttempts+')',heartbeat:Date.now(),media:null});this.retrying.set(key,0);await this.act(result,'retry');idle=0;continue;}
+    if(result.result.retry){this.report('Sales Coach visar '+result.result.score+' procent. Försök '+(attempts.length+1)+' av '+this.maxTestAttempts+' granskar svaren på nytt.');this.onStatus({phase:'Granskar om underkänt test ('+(attempts.length+1)+'/'+this.maxTestAttempts+')',heartbeat:Date.now(),media:null});this.beginRetry(key);await this.act(result,'retry');idle=0;continue;}
     throw new Error('Sales Coach visar '+result.result.score+' procent men erbjuder inget säkert omförsök.');
    }
    const failed=frames.find(f=>f.result.failed);
-   if(failed?.result.retry){const key=this.expectedURL+'|'+failed.result.fingerprint,ids=failed.result.options.filter(o=>o.selected).map(o=>o.id).sort((a,b)=>a-b),attempts=this.failedAttempts.get(key)||[];if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:null});this.failedAttempts.set(key,attempts);this.submitted.delete(key);if(attempts.length>=this.maxTestAttempts)throw new Error('Testet är fortfarande underkänt efter '+attempts.length+' olika försök.');this.report('Sales Coach visar fel svar. Granskar svaren på nytt.');await this.act(failed,'retry');idle=0;continue;}
+   if(failed?.result.retry){const key=this.testKey(failed.result);if(this.retrying.has(key)){const waits=this.retrying.get(key)+1;this.retrying.set(key,waits);if(waits>40)throw new Error('Sales Coach laddade inte om frågorna efter Försök igen.');await this.sleep(500);continue;}const ids=failed.result.options.filter(o=>o.selected).map(o=>o.id).sort((a,b)=>a-b),attempts=this.failedAttempts.get(key)||[];if(ids.length&&!attempts.some(a=>JSON.stringify(a.ids)===JSON.stringify(ids)))attempts.push({ids,score:null,signature:this.answerSignature(failed.result,ids),choices:failed.result.options.filter(o=>ids.includes(o.id)).map(o=>o.text)});this.failedAttempts.set(key,attempts);this.submitted.delete(key);if(attempts.length>=this.maxTestAttempts)throw new Error('Testet är fortfarande underkänt efter '+attempts.length+' olika försök.');this.report('Sales Coach visar fel svar. Granskar svaren på nytt.');this.beginRetry(key);await this.act(failed,'retry');idle=0;continue;}
    if(failed)throw new Error('Sales Coach visar fel svar och erbjuder inget säkert omförsök.');
+   const rewarded=all.find(s=>s.xp>0||s.success);if(rewarded){this.report(rewarded.xp>0?'Sales Coach bekräftar '+rewarded.xp+' intjänade erfarenhetspoäng.':'Sales Coach visar att momentet är slutfört.');return 'passed';}
    const request=inputRequest(frames);if(request){const e=new Error(request.reason);e.code='USER_INPUT_REQUIRED';e.request=request;throw e;}
    const question=frames.find(f=>f.result.options.length>0&&!f.result.passed);
    // Accumulate lesson paragraphs, excluding frames displaying answer choices.
    for(const f of frames)this.context=(this.context+'\n'+f.result.lesson).split('\n').filter((s,i,a)=>s&&a.indexOf(s)===i).join('\n').slice(-100000);
-   if(question){const key=this.expectedURL+'|'+question.result.fingerprint;if(this.submitted.has(key)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180){this.report('Resultatvyn svarar inte. Kontrollerar om Sales Coach registrerade testet i samlingen.');return 'submitted-pending';}this.onStatus({phase:'Väntar på testresultat från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}if(this.retrying.delete(key))this.report('De nya testfrågorna är redo. Tar fram ett nytt studieförslag.');if(!prepared&&(question.result.groups>1||this.context.trim().length<500)){const record=KNOWN_TESTS[new URL(this.expectedURL).pathname];if(record?.parent&&!this.testParents?.length)this.testParents=[record.parent];try{await this.prepareTest();}catch(error){if(['PAGE_CHANGED','TRANSIENT_FRAME','ACCESS_DENIED'].includes(error.code))throw error;const paused=new Error('Provet hittades, men hela kursunderlaget kunde inte läsas. Granska frågorna manuellt.');paused.code='USER_QUIZ_REQUIRED';paused.studyGuide=(question.result.questions?.length?question.result.questions:[question.result]).map(q=>({prompt:q.prompt,suggestions:[],reason:error.message,evidence:''}));throw paused;}prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
+   if(question){const key=this.testKey(question.result);if(this.submitted.has(key)||question.result.options.every(o=>o.disabled)){if(++submissionWait>180){this.report('Resultatvyn svarar inte. Kontrollerar om Sales Coach registrerade testet i samlingen.');return 'submitted-pending';}this.onStatus({phase:'Väntar på testresultat från Sales Coach',heartbeat:Date.now(),media:null});await this.sleep(500);continue;}if(this.retrying.delete(key))this.report('De nya testfrågorna är redo. Apple Intelligence analyserar svaren på nytt.');if(!prepared&&(question.result.groups>1||this.context.trim().length<500)){const record=KNOWN_TESTS[new URL(this.expectedURL).pathname];if(record?.parent&&!this.testParents?.length)this.testParents=[record.parent];try{await this.prepareTest();}catch(error){if(['PAGE_CHANGED','TRANSIENT_FRAME','ACCESS_DENIED'].includes(error.code))throw error;const paused=new Error('Provet hittades, men hela kursunderlaget kunde inte läsas. Granska frågorna manuellt.');paused.code='USER_QUIZ_REQUIRED';paused.studyGuide=(question.result.questions?.length?question.result.questions:[question.result]).map(q=>({prompt:q.prompt,suggestions:[],reason:error.message,evidence:''}));throw paused;}prepared=true;idle=0;continue;}await this.solve(question);idle=0;continue;}
    if(all.some(s=>s.freeText))throw new Error('En fritextfråga behöver ditt svar.');
    const video=frames.find(f=>f.result.video&&!f.result.video.ended);
    if(video){
@@ -360,7 +396,7 @@ export class Autopilot {
   for(const item of queue)if(isVideoResource(item)){item.kind='Video';item.status='Video sist';videos.push(item);}
   await publish();this.report('Prioriterar alla resurser utan video. Videor körs sist, en i taget.');
   const execute=async(item,videoPhase)=>{
-   await this.guard();const remembered=this.issues.get(item.key);if(remembered&&!remembered.retryRequested&&['Åtkomst saknas','Behöver dina uppgifter','Besvara provet'].includes(remembered.status)){Object.assign(item,{status:remembered.status,reason:remembered.reason,inputQuestion:remembered.inputQuestion||'',studyGuide:remembered.studyGuide||[]});this.report('Hoppar över sparat moment för '+item.title+': '+item.reason);await publish();return;}item.status='Kontrollerar';await publish();
+   await this.guard();const remembered=this.issues.get(item.key);if(remembered&&!remembered.retryRequested&&['Åtkomst saknas','Behöver dina uppgifter'].includes(remembered.status)){Object.assign(item,{status:remembered.status,reason:remembered.reason,inputQuestion:remembered.inputQuestion||'',studyGuide:remembered.studyGuide||[]});this.report('Hoppar över sparat moment för '+item.title+': '+item.reason);await publish();return;}item.status='Kontrollerar';await publish();
    const defer=async frames=>{for(const f of frames)if(f.result.video&&!f.result.video.ended)await this.act(f,'pauseVideo');item.kind='Video';item.status='Video sist';item.reason='Väntar tills övriga resurser har bearbetats.';if(!videos.includes(item))videos.push(item);this.report('Lägger sist: '+item.title);};
    try{
     await this.navigate(item.url);await this.inventory();let frames=await this.frames();frames=await this.settledCourseFrames(item,frames);
@@ -369,7 +405,7 @@ export class Autopilot {
     const capability=classifyCourse(frames,item.title);
     if(!capability.supported){item.status=capability.code==='ACCESS_DENIED'?'Åtkomst saknas':'Behöver hjälp';item.reason=capability.reason;this.report('Hoppar över '+item.title+': '+item.reason);await this.rememberIssue(item);await publish();return;}
     item.kind=capability.kind;item.status='Kör';item.reason='';await publish();this.report('Kör '+capability.kind.toLowerCase()+': '+item.title);
-    this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(item.title);this.testParents=item.parents;const result=await this.resource({deferVideos:!videoPhase});
+    this.context='';this.expectTest=/test|frågetävling|kunskapskontroll|quiz/i.test(item.title);this.testParents=item.parents;const result=await this.resource({deferVideos:!videoPhase});
     if(result==='deferred-video'){await defer([]);await publish();return;}
     const verified=await this.verifyCompletion(item,result==='unconfirmed'?{attempts:2,delays:[1500]}:{});
     item.status=verified?'Registrerad klar':'Ej verifierad';item.reason=verified?'':result==='submitted-pending'?'Svar inskickat, men varken resultatvyn eller samlingen bekräftade registreringen efter flera kontroller.':'Bearbetad, men Sales Coach har inte bekräftat slutförande efter flera kontroller.';if(verified)await this.clearIssue(item.key);else await this.rememberIssue(item);this.report(item.title+': '+item.status);
