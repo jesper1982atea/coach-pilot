@@ -26,7 +26,7 @@ Paketbyggaren kräver macOS med Swift-kompilator. Versionsnumret finns i scripts
 
 ## Omfattning
 
-Kunskapsprov hanteras automatiskt av Apple Intelligence när källunderlag och tydliga flervalsfrågor finns. Piloten väljer och skickar in svar, läser resultatet och analyserar om underkända svar. Högst fyra försök per moment och körning; upprepade underkända kombinationer stoppas.
+Kunskapsprov hanteras automatiskt av Apple Intelligence när källunderlag och tydliga flervalsfrågor finns. Piloten väljer och skickar in svar, läser resultatet och analyserar om underkända svar. Högst fem försök per moment och körning; upprepade underkända kombinationer stoppas.
 
 Källkod publiceras för insyn. Ingen separat öppen källkodslicens har valts.
 
