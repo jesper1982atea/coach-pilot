@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
+import {captionFrame} from '../src/captions.js';
+function setup(){const dom=new JSDOM('<video><track kind="subtitles" srclang="sv" src="/captions.vtt"></video>',{url:'https://salescoach.apple.com/lesson'});global.document=dom.window.document;global.location=dom.window.location;return document.querySelector('video');}
+test('Reads existing caption cues without a network request',async()=>{const video=setup();Object.defineProperty(video,'textTracks',{value:[{kind:'subtitles',language:'sv',cues:[{text:'Underlag från videon.'}]}]});const old=global.fetch;try{global.fetch=()=>assert.fail('Loaded cues should not fetch');assert.deepEqual((await captionFrame()).passages,[{video:1,text:'Underlag från videon.'}]);}finally{global.fetch=old;}});
+test('Fetches declared VTT tracks, strips timing/markup and reports missing tracks',async()=>{setup();const old=global.fetch;try{global.fetch=async url=>{assert.equal(url,'https://salescoach.apple.com/captions.vtt');return new Response('WEBVTT\n\n00:00.000 --> 00:03.000\n<b>Skanna dokument.</b>\n\n00:03.000 --> 00:06.000\nDela säkert.');};assert.equal((await captionFrame()).passages[0].text,'Skanna dokument.\nDela säkert.');global.fetch=async()=>new Response('<html>Logga in</html>');assert.deepEqual((await captionFrame()).missing,[1]);}finally{global.fetch=old;}});
+test('Caption failures do not invent a transcript',async()=>{setup();const old=global.fetch;try{global.fetch=async()=>{throw new Error('Unavailable');};const result=await captionFrame();assert.equal(result.passages.length,0);assert.deepEqual(result.missing,[1]);}finally{global.fetch=old;}});
