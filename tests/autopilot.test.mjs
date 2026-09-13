@@ -13,6 +13,20 @@ test('Full quiz loop submits, observes failure despite XP, re-analyzes and passe
  const {pilot}=runner(async request=>{requests.push(request);return {ok:true,text:JSON.stringify({answers:[requests.length===1?2:1],uncertain:false,evidence:lesson})};});
  pilot.prepareTest=async()=>{};assert.equal(await pilot.resource(),'passed');assert.equal(submissions,2);assert.equal(retries,1);assert.match(requests[1].question,/Ladda batteriet.*0 %/);assert.equal(courseFrame().score,100);
 });
+test('Result view with changed question markup and cleared selections retries the original submission',async()=>{
+ quiz();let submissions=0;const requests=[];const original=document.querySelector('legend').textContent;
+ document.querySelector('#submit').onclick=()=>{
+  submissions++;document.querySelector('fieldset').disabled=true;document.querySelector('#submit').disabled=true;
+  document.querySelector('legend').textContent='Resultat: '+original;
+  document.querySelectorAll('input').forEach(e=>e.checked=false);
+  document.querySelector('main').insertAdjacentHTML('beforeend',submissions===1?'<div id="result">50 % Gå igenom dina svar.</div><button id="retry">Försök igen</button>':'<div id="result">100 % Bra jobbat!</div>');
+  if(submissions===1)document.querySelector('#retry').onclick=()=>{document.querySelector('#result').remove();document.querySelector('#retry').remove();document.querySelector('legend').textContent=original;document.querySelector('fieldset').disabled=false;document.querySelector('#submit').disabled=false;};
+ };
+ const {pilot}=runner(async request=>{requests.push(request);return {ok:true,text:JSON.stringify({answers:[requests.length===1?2:1],uncertain:false,evidence:lesson})};});
+ pilot.prepareTest=async()=>{};
+ assert.equal(await pilot.resource(),'passed');assert.equal(submissions,2);assert.equal(requests.length,2);
+ assert.match(requests[1].question,/Ladda batteriet.*50 %/);
+});
 test('Shuffling choices cannot resubmit the same rejected answer',async()=>{
  quiz();let submissions=0;document.querySelector('#submit').onclick=()=>submissions++;const {pilot}=runner(async()=>({ok:true,text:response}));const before=courseFrame();pilot.failedAttempts.set(pilot.testKey(before),[{ids:[2],score:0,signature:pilot.answerSignature(before,[2]),choices:['Ladda batteriet']}]);const labels=document.querySelectorAll('label');labels[0].parentElement.appendChild(labels[0]);const after=courseFrame();assert.equal(pilot.testKey(before),pilot.testKey(after));await assert.rejects(pilot.solve({frameId:0,result:after}),/redan underkänt/);assert.equal(submissions,0);
 });
