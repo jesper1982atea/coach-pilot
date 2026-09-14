@@ -103,7 +103,7 @@ export function courseFrame(command = {}) {
  const scroll=scrollables.map((e,id)=>({id:id+1,top:Math.round(Number(e.scrollTop)||0),remaining:Math.max(0,Math.round(Number(e.scrollHeight)-Number(e.clientHeight)-(Number(e.scrollTop)||0)))})).filter(s=>s.remaining>4);
  const video=[...root.querySelectorAll('video')].find(visible);
  const freeText=[...root.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].some(visible);
- const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,unsupportedQuestion,submit:submit.length===1&&enabled(submit[0]),retry:retry.length===1&&enabled(retry[0]),next:stepControls.map(s=>s.text),stepControls,sections:sectionControls.map(s=>s.text),sectionControls,interactions:interactions.map((e,id)=>({id:id+1,text:label(e)})),scroll,failed,passed,complete,success,xp,score,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
+ const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,unsupportedQuestion,submit:submit.length===1&&enabled(submit[0]),retry:retry.length===1&&enabled(retry[0]),next:stepControls.map(s=>s.text),stepControls,sections:sectionControls.map(s=>s.text),sectionControls,interactions:interactions.map((e,id)=>({id:id+1,text:label(e)})),scroll,failed,passed,complete,success,xp,score,displayedScore:resultMatch?Number(resultMatch[1]):null,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
  if(!command.action)return state;
  if(command.url!==location.href||command.fingerprint!==fingerprint)throw new Error('Sidan ändrades före åtgärden.');
  const click=e=>{if(!e||!enabled(e))throw new Error('Kontrollen är inte tillgänglig.');e.scrollIntoView({block:'center'});e.click();return {acted:true};};
@@ -308,6 +308,11 @@ export class Autopilot {
    if(all.some(s=>s.unsupportedQuestion))throw new Error('En specialbyggd ordvals- eller dra-och-släpp-fråga kräver manuell hjälp. Provet skickas inte in ofullständigt.');
    if(deferVideos&&all.some(s=>s.video)){for(const f of frames)if(f.result.video&&!f.result.video.ended)await this.act(f,'pauseVideo');return 'deferred-video';}
    if(all.some(s=>s.score===100)){this.report('Sales Coach visar 100 procent på kunskapstestet.');return 'passed';}
+   const submission=this.lastSubmissions.size?this.lastSubmissions.get(new URL(this.expectedURL).pathname):null;
+   if(submission&&this.submitted.has(submission.key)&&!all.some(s=>s.retry||s.failed||(s.score!=null&&s.score!==submission.state.displayedScore))){
+    if(++submissionWait>180){this.report('Inlämningen väntar fortfarande på servern. Kontrollerar registreringen utan att skicka igen.');return 'submitted-pending';}
+    this.onStatus({phase:'Svar inskickat – väntar på ett nytt resultat, gammal poäng ignoreras',heartbeat:Date.now(),media:null});await this.sleep(500);continue;
+   }
    const result=frames.find(f=>f.result.score!=null&&f.result.score<100);
    if(result){
     const {key,state:submittedState,ids}=this.failedSubmission(result.result),attempts=this.failedAttempts.get(key)||[];
