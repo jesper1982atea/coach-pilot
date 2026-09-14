@@ -13,7 +13,8 @@ export function catalogPage(command={}) {
    return [{url:u.href,title,kind:resource?'resource':badge?'badge':'catalog',completed,locked,related}];
   }catch{return [];}
  });
- const buttons=[...document.querySelectorAll('button,[role="button"]')].filter(visible).filter(b=>/\bunearned\b/i.test(clean(b.getAttribute('aria-label')||b.innerText||b.textContent))&&!b.disabled);
+ // Some badge cards expose a label but no native button role.
+ const buttons=[...document.querySelectorAll('button,[role="button"],[aria-label]')].filter(visible).filter(b=>/\bunearned\b/i.test(clean(b.getAttribute('aria-label')||b.innerText||b.textContent))&&!b.disabled&&b.getAttribute('aria-disabled')!=='true'&&!b.closest('a[href]')).filter((b,_,all)=>!all.some(child=>child!==b&&b.contains(child)));
  const titleOf=b=>clean(b.getAttribute('aria-label')||b.innerText||b.textContent);
  if(command.open){const matches=buttons.filter(b=>titleOf(b)===command.open);if(matches.length!==1)throw new Error('Prestationsknappen saknas eller är otydlig.');matches[0].click();return {opened:true};}
  for(const b of buttons)links.push({url:location.href,title:titleOf(b),kind:'badgeButton',button:titleOf(b)});
@@ -36,7 +37,6 @@ export function addCandidates(queue,links,parent,academy=false) {
  for(const link of links){if(link.kind!=='resource'||link.completed||link.locked)continue;
   const key=new URL(link.url).pathname;const existing=queue.find(i=>i.key===key);
   if(existing){if(academy)existing.academy=true;if(parent&&!existing.parents.includes(parent))existing.parents.push(parent);continue;}
-  if(queue.length>=100)break;
   queue.push({...link,key,academy,parents:parent?[parent]:[],status:'Hittad',reason:''});
  }
  return queue;
@@ -45,4 +45,12 @@ export function addCandidates(queue,links,parent,academy=false) {
 export function isVideoResource(item){return item.kind==='Video'||/\b(?:video(?:n|r|s)?|film(?:en|er)?)\b/i.test(item.title||'');}
 export function prioritizeResources(queue){const rank=i=>(i.academy?0:2)+(isVideoResource(i)?1:0);return [...queue].sort((a,b)=>rank(a)-rank(b));}
 export const ACADEMY_URL='https://salescoach.apple.com/home/program/7047/368135';
+export const DISCOVERY_ROOTS=['https://salescoach.apple.com/home/achievements','https://salescoach.apple.com/home/for-you'];
+export function resumeDiscovery(saved,selected){
+ const valid=e=>{try{return new URL(e.url).origin==='https://salescoach.apple.com'&&/^\/home\/(?:achievements(?:\/unearned(?:\/\d+)?)?|for-you(?:\/.*)?|collection\/[^/]+|program\/\d+\/\d+|explore\/(?:collections|curriculum\/\d+))$/.test(new URL(e.url).pathname)&&Number.isInteger(e.depth)&&e.depth>=0&&e.depth<=6&&(!e.button||typeof e.button==='string');}catch{return false;}};
+ const pending=saved?.version===1&&Array.isArray(saved.pages)?saved.pages.filter(valid):[];
+ const seen=pending.length&&Array.isArray(saved.seen)?saved.seen.filter(k=>typeof k==='string'):[];
+ const roots=[...(selected?[selected]:[]),...DISCOVERY_ROOTS].map(url=>({url,depth:0})).filter(valid);
+ return {pages:[...pending,...roots.filter(e=>!seen.includes(new URL(e.url).pathname)&&!pending.some(p=>p.url===e.url&&!p.button))],seen};
+}
 export function academyChild(link){return !link.locked&&!link.related&&/\/home\/(?:collection\/[^/]+|program\/7047\/\d+)$/.test(new URL(link.url).pathname)&&!/^back$|^tillbaka$/i.test(link.title);}

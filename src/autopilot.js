@@ -5,7 +5,7 @@ import {trackVideo} from './run-progress.js';
 import {inputRequest} from './user-input.js';
 import {KNOWN_TESTS} from './known-tests-data.js';
 import {accessDialog,followVisibleLink} from './navigation.js';
-import {catalogPage,classifyCourse,addCandidates,isVideoResource,prioritizeResources,ACADEMY_URL,academyChild} from './discovery.js';
+import {catalogPage,classifyCourse,addCandidates,isVideoResource,prioritizeResources,ACADEMY_URL,academyChild,resumeDiscovery} from './discovery.js';
 import {extractPage,mergeFrames,relevantContext,isCoachURL,indexContext} from './extract.js';
 
 export function isTransientFrameError(error){return /frame with id .* removed|no frame with id|frame.*(?:was )?removed|execution context.*(?:destroyed|invalidated)|cannot access contents of url/i.test(error?.message||String(error));}
@@ -356,14 +356,16 @@ export class Autopilot {
   }
   throw new Error('Tids- eller steggränsen nåddes. Körningen är pausad.');
  }
- async crawlCatalog(queue,pages,publish,academy=false,immediate=false){
-  const seen=new Set();
+ async crawlCatalog(queue,pages,publish,academy=false,immediate=false,checkpoint=null){
+  const seen=new Set(checkpoint?.seen||[]);
+  const save=async pending=>{if(checkpoint)await this.api.storage.local.set({discoveryCursor:{version:1,pages:pending,seen:[...seen],updatedAt:Date.now()},discoveryNotice:pending.length?"Sökning sparad: "+pending.length+" katalogsidor väntar. Fortsätter vid nästa automatiska körning.":"Hela den hittade katalogkön är genomgången. Se återstående moment och märken i loggen."});};
   if(academy)this.academyAudit={rootComplete:false,blocked:[]};
-  while(pages.length&&seen.size<(academy?40:30)&&queue.length<100){
-   await this.guard();const entry=pages.shift(),key=new URL(entry.url).pathname+(entry.button?'|'+entry.button:'');if(seen.has(key))continue;seen.add(key);
+  while(pages.length&&(!academy||seen.size<40)){
+   await this.guard();const entry=pages.shift(),key=new URL(entry.url).pathname+(entry.button?'|'+entry.button:'');if(seen.has(key))continue;await save([entry,...pages]);seen.add(key);
+   if(checkpoint)this.report('Söker katalog '+seen.size+' · '+pages.length+' katalogsidor väntar.');
    try{
    await this.navigate(entry.url);
-   if(entry.button){await this.guard();await this.script({target:{tabId:this.tabId,frameIds:[0]},func:catalogPage,args:[{open:entry.button}]},{attempts:1});await this.sleep(1500);const destination=await this.api.tabs.get(this.tabId);if(!isCoachURL(destination.url)||!/^\/home\/achievements\/unearned\/\d+$/.test(new URL(destination.url).pathname))throw new Error('Prestationsknappen öppnade inte en stödd sida.');this.expectedURL=destination.url;await this.navigate(destination.url);}
+   if(entry.button){await this.guard();await this.script({target:{tabId:this.tabId,frameIds:[0]},func:catalogPage,args:[{open:entry.button}]},{attempts:1});await this.sleep(1500);const destination=await this.api.tabs.get(this.tabId);if(!isCoachURL(destination.url)||!/^\/home\/achievements\/unearned\/\d+$/.test(new URL(destination.url).pathname))throw Object.assign(new Error('Prestationskortet öppnade inte en stödd sida. Öppna det manuellt från prestationslistan.'),{code:'BADGE_NAVIGATION'});this.expectedURL=destination.url;await this.navigate(destination.url);}
    const inventory=await this.inventory();
    if(/^\/home\/achievements\/(?:unearned|earned)\/\d+$/.test(new URL(this.expectedURL).pathname)){
     entry.badge=new URL(this.expectedURL).pathname;
@@ -394,18 +396,22 @@ export class Autopilot {
     }
    }else addCandidates(queue,candidates,parent,academy);
    await publish();
-   if(entry.depth<(academy?6:3))for(const link of links)if(link.kind!=='resource'&&!link.locked&&(academy?academyChild(link):!link.completed&&!new URL(link.url).pathname.startsWith('/home/program/7047/'))&&!seen.has(new URL(link.url).pathname+(link.button?'|'+link.button:'')))pages.push({url:link.url,button:link.button,depth:entry.depth+1,badge:entry.badge});
+   if(entry.depth<6)for(const link of links)if(link.kind!=='resource'&&!link.locked&&(academy?academyChild(link):!link.completed&&!new URL(link.url).pathname.startsWith('/home/program/7047/'))&&!seen.has(new URL(link.url).pathname+(link.button?'|'+link.button:'')))pages.push({url:link.url,button:link.button,depth:entry.depth+1,badge:entry.badge});
+   if(entry.depth>=6&&links.some(l=>l.kind!=='resource'&&!l.completed&&!l.locked))this.report('Djupgräns nådd på '+entry.url.split('?')[0]+'. Öppna den sidan och kör igen för att söka djupare.');
    }catch(e){
     if(['PAGE_CHANGED','TRANSIENT_FRAME'].includes(e.code)&&(entry.retries||0)<2){entry.retries=(entry.retries||0)+1;seen.delete(key);pages.unshift(entry);this.report('Sales Coach bytte sida under sökningen. Försöker samma katalog igen.');continue;}
+    if(e.code==='BADGE_NAVIGATION'){await this.record({key,url:entry.url,title:entry.button||entry.url,kind:'catalog',status:'Behöver hjälp',reason:e.message});this.report((entry.button||entry.url)+': '+e.message);await save(pages);continue;}
     if(e.code!=='ACCESS_DENIED'&&!['PAGE_CHANGED','TRANSIENT_FRAME'].includes(e.code))throw e;
     if(academy)this.academyAudit.blocked.push((e.code==='ACCESS_DENIED'?'Åtkomst saknas: ':'Sidan kunde inte läsas stabilt: ')+entry.url.split('?')[0]);this.report((e.code==='ACCESS_DENIED'?'Åtkomst saknas för ':'Kunde inte läsa ')+entry.url.split('?')[0]+'. Fortsätter med tillgängliga moment.');
    }
+   await save(pages);
   }
-  if(academy&&(pages.length||queue.length>=100))this.academyAudit.blocked.push('Inventeringens gräns nåddes.');
+  if(!pages.length)await save([]);
+  if(academy&&pages.length)this.academyAudit.blocked.push('Inventeringens gräns nåddes.');
  }
  async discoverAndRun(){
   const [tab]=await this.api.tabs.query({active:true,currentWindow:true});if(!tab?.id||!isCoachURL(tab.url))throw new Error('Öppna Sales Coach och logga in först.');
-  this.tabId=tab.id;this.expectedURL=tab.url;await this.loadIssues();const queue=[];const selectedCatalog=/^\/home\/collection\/[^/]+$/.test(new URL(tab.url).pathname)?tab.url:null;
+  this.tabId=tab.id;this.expectedURL=tab.url;await this.loadIssues();const queue=[];const selectedCatalog=/^\/home\/(?:collection\/[^/]+|achievements(?:\/unearned\/\d+)?)$/.test(new URL(tab.url).pathname)?tab.url:null;
   const publish=async()=>{this.onQueue?.(prioritizeResources(queue).map(i=>({...i})));await this.api.storage.local.set({autopilotQueue:queue.map(({title,url,key,status,reason,kind,academy,inputQuestion,studyGuide})=>({title,url,key,status,reason,kind,academy,inputQuestion,studyGuide})),queueUpdatedAt:Date.now()});};
   this.report('Academy först: söker nästa ogjorda moment och börjar direkt.');
   for(let pass=0;pass<20;pass++){
@@ -425,9 +431,11 @@ export class Autopilot {
    await this.api.storage.local.set({academyNotice:'Academy väntar: '+reason});
    await publish();this.report('Academy väntar: '+reason+' Fortsätter med övrigt material.');
   }else{await this.api.storage.local.set({academyNotice:''});this.report('Alla Academy-krav är verifierade som klara.');}
-  if(selectedCatalog){this.report('Kontrollerar först samlingen som var öppen när piloten startades.');await this.crawlCatalog(queue,[{url:selectedCatalog,depth:0}],publish,false,true);}
-  this.report('Söker nu efter övriga resurser under För dig.');
-  await this.crawlCatalog(queue,[{url:'https://salescoach.apple.com/home/for-you',depth:0}],publish,false,true);
+  const stored=await this.api.storage.local.get?.('discoveryCursor')||{};
+  const cursor=resumeDiscovery(stored.discoveryCursor,selectedCatalog);
+  if(cursor.seen.length)for(const row of Object.values(this.ledger.records))if(row.kind==='badge'&&isCoachURL(row.url)&&/^\/home\/achievements\/(?:unearned|earned)\/\d+$/.test(new URL(row.url).pathname))this.badges.set(row.key,{...row});
+  this.report('Söker hela prestationslistan, inklusive Apples ekosystem, och övriga resurser under För dig.'+(cursor.seen.length?' Återupptar sparad sökning.':''));
+  await this.crawlCatalog(queue,cursor.pages,publish,false,true,cursor);
   const other=queue.filter(i=>!i.academy&&i.status==='Hittad');
   await this.processQueue(other,publish);
   await this.finishBadges(queue,publish);
