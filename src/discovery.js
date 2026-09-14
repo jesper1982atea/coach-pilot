@@ -24,6 +24,7 @@ export function catalogPage(command={}) {
 export function classifyCourse(frames,title='') {
  if(/formulär|survey|enkät/i.test(title))return {supported:false,reason:'Formulär kräver egna uppgifter och fritextsvar. Öppna och fyll i formuläret manuellt.'};
  const states=frames.map(f=>f.result).filter(Boolean);
+ if(states.some(s=>s.resume))return {supported:true,kind:'Återupptagning'};
  if(!states.length)return {supported:false,reason:'Inget åtkomligt kursinnehåll'};
  if(states.some(s=>/får tillgång[^.]{0,180}(?:inbjuden|inbjudan)[^.]{0,100}(?:event|evenemang)|(?:course tasks|course materials|access to this course)[^.]{0,180}invited[^.]{0,100}(?:event|session)/i.test(((s.text||'')+' '+(s.lesson||'')).replace(/\s+/g,' '))))return {supported:false,code:'ACCESS_DENIED',reason:'Kursen kräver en inbjudan till eventet i Sales Coach.'};
  if(states.some(s=>s.freeText||(s.groups>1&&!s.questions?.length)))return {supported:false,reason:'Fritext eller otydligt grupperade frågor'};

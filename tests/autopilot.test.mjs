@@ -124,3 +124,18 @@ test('Source preparation retains current lesson and reads lessons alongside quiz
  pilot.frames=async()=>[{frameId:0,result:{groups:2,options:[{text:'Quiz answer must not be a source'}],freeText:false,lesson:lesson.repeat(10),sections:[]}}];pilot.act=async()=>assert.fail('No quiz interaction while collecting sources');
  await pilot.prepareTest();assert.match(pilot.context,/Egen kurskälla/);assert.ok(pilot.context.includes(lesson));assert.doesNotMatch(pilot.context,/Quiz answer/);
 });
+
+test('Resume modal hides underlying quiz and never exposes restart as an interaction',()=>{
+ page('<main><label><input type="radio">Old answer</label><button>Skicka svar</button></main><div aria-label="Resume Previous Activity Modal"><h2>Fortsätt</h2><button>Fortsätt</button><button>Börja om</button></div>','https://seeddownload.cdn-apple.com/synthetic/index.html');
+ const state=courseFrame();assert.equal(state.resume,true);assert.equal(state.options.length,0);assert.equal(state.submit,false);assert.deepEqual(state.next,['Fortsätt']);assert.deepEqual(state.interactions,[]);
+});
+test('Resume is processed before old result in another frame and never restarts',async()=>{
+ page('<div role="dialog"><button id="resume">Fortsätt</button><button id="restart">Börja om</button></div>');let resumed=0,restarted=0;
+ document.querySelector('#restart').onclick=()=>restarted++;document.querySelector('#resume').onclick=()=>{resumed++;document.body.innerHTML='<h2>Slutfört</h2>';};
+ const {pilot}=runner(async()=>{throw new Error('AI should not run');});const frames=pilot.frames.bind(pilot);pilot.frames=async()=>[...(await frames()),{frameId:9,result:{score:100}}];
+ await pilot.resource();assert.equal(resumed,1);assert.equal(restarted,0);
+});
+test('A stuck resume dialog stops after bounded attempts without starting over',async()=>{
+ page('<div role="dialog"><button>Continue</button><button>Start over</button></div>');const {pilot}=runner(async()=>{});let clicks=0;document.querySelector('button').onclick=()=>clicks++;
+ await assert.rejects(pilot.resource(),/Återupptagningsdialogen/);assert.equal(clicks,2);
+});

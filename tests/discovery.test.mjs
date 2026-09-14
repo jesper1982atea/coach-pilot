@@ -12,3 +12,4 @@ test('Discovers and opens unearned badge buttons without guessing URLs',()=>{con
 
 test('Named forms never become reading resources before their fields load',()=>{const result=classifyCourse([{result:{lesson:'Introduction '.repeat(100)}}],'Årets lyckade exempel – formulär');assert.equal(result.supported,false);assert.match(result.reason,/egna uppgifter/);});
 test('Locked program placeholders without URLs remain visible to the audit',()=>{const d=new JSDOM('<a role="link" aria-disabled="true">Resurser 4</a><a role="link" aria-disabled="true">Resurser 5</a>');global.document=d.window.document;global.location=d.window.location;d.window.HTMLElement.prototype.getClientRects=()=>[{}];assert.deepEqual(catalogPage().lockedItems,['Resurser 4','Resurser 5']);});
+test('Resume dialog is supported before lesson content becomes visible',()=>{assert.deepEqual(classifyCourse([{result:{resume:true,next:['Fortsätt'],lesson:''}}]),{supported:true,kind:'Återupptagning'});});
