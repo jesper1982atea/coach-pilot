@@ -51,6 +51,20 @@ export function courseFrame(command = {}) {
   const questionFeedback=clean(feedbackNodes.map(e=>e.getAttribute('aria-label')||label(e)).filter(t=>/incorrect|correct|fel svar|rätt svar|inte rätt|inte korrekt|korrekt/i.test(t)).join(' ')).slice(0,1000);
   return {prompt,options:opts,multi,requiredCount,feedback:questionFeedback};
  });
+ const selectBindings=new Map();
+ const wordSelects=[...root.querySelectorAll('select')].filter(visible).filter(e=>/ordval|word|answer|svar|blank|lucka/i.test(e.getAttribute('aria-label')||[...(e.labels||[])].map(label).join(' '))||/fyll i|fill in/i.test(e.parentElement?.textContent||''));
+ const sentenceOf=container=>{const clone=container.cloneNode(true);[...clone.querySelectorAll('select')].forEach((e,i)=>e.replaceWith('[lucka '+(i+1)+']'));clone.querySelectorAll('input,button').forEach(e=>e.remove());return clean(clone.textContent);};
+ for(const [selectIndex,select] of wordSelects.entries()){
+  let container=select.parentElement;
+  while(container.parentElement&&container.parentElement!==root&&sentenceOf(container).length<30)container=container.parentElement;
+  const siblings=[...container.querySelectorAll('select')],blank=siblings.indexOf(select)+1;
+  const opts=[...select.options].filter(o=>o.value!==''&&!/^(välj(?: svar)?|select(?: an? answer)?|choose)[.…]*$/i.test(clean(o.textContent))).map(o=>{
+   const id=options.length+1,option={id,text:clean(o.textContent),selected:o.selected,disabled:select.disabled||o.disabled||!!select.closest('[aria-disabled="true"]'),wordChoice:true};options.push(option);selectBindings.set(id,{select,option:o});return option;
+  });
+  const prompt='Ordval '+(selectIndex+1)+': Fyll lucka '+blank+' i meningen: '+sentenceOf(container);
+  questions.push({prompt,options:opts,multi:false,requiredCount:1,feedback:''});containers.push(container);
+ }
+ const unsupportedQuestion=[...root.querySelectorAll('[role="combobox"]:not(select),[aria-haspopup="listbox"]:not(select),[draggable="true"]:not(img):not(a)')].some(visible);
  const prompt=questions[0]?.prompt||'',multi=questions[0]?.multi||false;
  const groups=questions.length;
  const fingerprint=JSON.stringify(questions.map(q=>[q.prompt,q.options.map(o=>o.text),q.multi,q.requiredCount]));
@@ -70,7 +84,7 @@ export function courseFrame(command = {}) {
   (e.getAttribute('role')==='tab'&&e.getAttribute('aria-selected')!=='true')||
   /^(visa|läs|vänd|reveal|show|learn)\b/i.test(label(e))
  )&&!/spela|play|paus|pause|ljud|mute|volym|volume|undertext|caption|inställningar|settings|bild-i-bild|picture.in.picture|helskärm|fullscreen|stäng|close|bakåt|back|åtgärder|actions|meny|menu|profil|profile|dela|share|ladda ner|download|tillåt kursramar|stoppa/i.test(label(e)));
- const lesson=[...root.querySelectorAll('h1,h2,h3,h4,p,li,td,th,blockquote,a')].filter(e=>visible(e)&&(!choices.length||!containers.some(c=>c.contains(e)))).map(label).filter(Boolean).join('\n').slice(0,40000);
+ const lesson=[...root.querySelectorAll('h1,h2,h3,h4,p,li,td,th,blockquote,a')].filter(e=>visible(e)&&!containers.some(c=>c.contains(e))).map(label).filter(Boolean).join('\n').slice(0,40000);
  const text=[...root.querySelectorAll('h1,h2,h3,h4,p,li,[role="alert"]')].filter(visible).map(label).filter(Boolean).join('\n').slice(0,40000);
  const feedback=[...root.querySelectorAll('[role="alert"],.feedback,[class*="feedback"],[class*="Feedback"]')].filter(visible).map(label).join(' ');
  const failed=/\b(incorrect|wrong answer|fel svar|inte rätt|inte korrekt)\b/i.test(feedback);
@@ -89,17 +103,19 @@ export function courseFrame(command = {}) {
  const scroll=scrollables.map((e,id)=>({id:id+1,top:Math.round(Number(e.scrollTop)||0),remaining:Math.max(0,Math.round(Number(e.scrollHeight)-Number(e.clientHeight)-(Number(e.scrollTop)||0)))})).filter(s=>s.remaining>4);
  const video=[...root.querySelectorAll('video')].find(visible);
  const freeText=[...root.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].some(visible);
- const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,submit:submit.length===1&&enabled(submit[0]),retry:retry.length===1&&enabled(retry[0]),next:stepControls.map(s=>s.text),stepControls,sections:sectionControls.map(s=>s.text),sectionControls,interactions:interactions.map((e,id)=>({id:id+1,text:label(e)})),scroll,failed,passed,complete,success,xp,score,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
+ const state={url:location.href,text,lesson,prompt,options,multi,groups,questions,requiredCount:questions[0]?.requiredCount,fingerprint,unsupportedQuestion,submit:submit.length===1&&enabled(submit[0]),retry:retry.length===1&&enabled(retry[0]),next:stepControls.map(s=>s.text),stepControls,sections:sectionControls.map(s=>s.text),sectionControls,interactions:interactions.map((e,id)=>({id:id+1,text:label(e)})),scroll,failed,passed,complete,success,xp,score,freeText,video:video?{ended:video.ended,paused:video.paused,time:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null}:null};
  if(!command.action)return state;
  if(command.url!==location.href||command.fingerprint!==fingerprint)throw new Error('Sidan ändrades före åtgärden.');
  const click=e=>{if(!e||!enabled(e))throw new Error('Kontrollen är inte tillgänglig.');e.scrollIntoView({block:'center'});e.click();return {acted:true};};
  if(command.action==='select'){
   const option=options.find(o=>o.id===command.id),element=choices[command.id-1];
-  if(state.freeText||state.failed||!option||option.text!==command.text)throw new Error('Svarsalternativet ändrades eller kräver manuell input.');
-  if(option.selected===command.selected)return {acted:false};return click(element);
+  if(state.unsupportedQuestion||state.freeText||state.failed||!option||option.text!==command.text)throw new Error('Svarsalternativet ändrades eller kräver manuell input.');
+  if(option.selected===command.selected)return {acted:false};
+  const binding=selectBindings.get(command.id);if(binding){if(!enabled(binding.select)||binding.option.disabled)throw new Error('Ordvalet är låst.');if(!command.selected)return {acted:false};binding.select.scrollIntoView({block:'center'});binding.select.value=binding.option.value;binding.select.dispatchEvent(new Event('input',{bubbles:true}));binding.select.dispatchEvent(new Event('change',{bubbles:true}));return {acted:true};}
+  return click(element);
  }
  if(command.action==='submit'){
-  if(!state.submit||state.failed||state.freeText||!questions.length||questions.some(q=>{const n=q.options.filter(o=>o.selected).length;return !n||(q.requiredCount!=null&&n!==q.requiredCount);}))throw new Error('Inskickning stoppad: otydlig uppgift eller kontroll.');
+  if(state.unsupportedQuestion||!state.submit||state.failed||state.freeText||!questions.length||questions.some(q=>{const n=q.options.filter(o=>o.selected).length;return !n||(q.requiredCount!=null&&n!==q.requiredCount);}))throw new Error('Inskickning stoppad: otydlig uppgift eller kontroll.');
   if(JSON.stringify(options.filter(o=>o.selected).map(o=>o.id))!==JSON.stringify(command.ids))throw new Error('De valda svaren stämmer inte med förslaget.');
   return click(submit[0]);
  }
@@ -197,7 +213,7 @@ export class Autopilot {
  beginRetry(key){const path=new URL(this.expectedURL).pathname,count=this.retryCounts.get(path)||0;if(count>=this.maxTestAttempts-1)throw new Error('Gränsen på '+this.maxTestAttempts+' provförsök är nådd. Momentet sparas för uppföljning.');this.retryCounts.set(path,count+1);this.submitted.delete(key);const previous=this.lastSubmissions.get(path);if(previous)this.submitted.delete(previous.key);this.retrying.set(path,0);}
  async reviewAnswer(state,context,question){return reviewAnswer({state,context,question,native:p=>this.native(p),guard:()=>this.guard(),report:this.report,validate:validateAnswer});}
  async solve(frame,revised=0){
-  const s=frame.result;if(s.groups>1)return this.solveTest(frame);if(s.freeText||!s.prompt||s.options.length<2||s.options.length>12||s.options.some(o=>!o.text))throw new Error('Den här frågetypen behöver granskas manuellt.');
+  const s=frame.result;if(s.groups>1)return this.solveTest(frame);if(s.unsupportedQuestion||s.freeText||!s.prompt||s.options.length<2||s.options.length>12||s.options.some(o=>!o.text))throw new Error('Den här frågetypen behöver granskas manuellt.');
   const key=this.testKey(s);if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
   const context=relevantContext(this.context,s.prompt,5500);if(context.trim().length<60)throw new Error('Kursunderlag saknas för att besvara frågan. Läs materialet först.');
   this.report('Läser frågan och ber Apple Intelligence om svar…');
@@ -247,7 +263,7 @@ export class Autopilot {
  }
  async solveTest(frame,revised=0){
   const s=frame.result,questions=s.questions;
-  if(s.freeText||!questions?.length||questions.length>20||questions.some(q=>!q.prompt||q.options.length<2||q.options.length>12||q.options.some(o=>!o.text)))throw new Error('Testets frågor behöver granskas manuellt.');
+  if(s.unsupportedQuestion||s.freeText||!questions?.length||questions.length>20||questions.some(q=>!q.prompt||q.options.length<2||q.options.length>12||q.options.some(o=>!o.text)))throw new Error('Testets frågor behöver granskas manuellt.');
   const key=this.testKey(s);
   if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
   const attempts=this.failedAttempts.get(key)||[];const answers=[];
@@ -289,6 +305,7 @@ export class Autopilot {
   const started=Date.now();let idle=0,steps=0,prepared=false,submissionWait=0,videoTrack=null,playAttempts=0;const expanded=new Set(),interacted=new Set(),scrolled=new Set(),navigation=new Map();
   while(Date.now()-started<30*60*1000&&steps++<1200){
    const frames=await this.frames();const all=frames.map(f=>f.result);
+   if(all.some(s=>s.unsupportedQuestion))throw new Error('En specialbyggd ordvals- eller dra-och-släpp-fråga kräver manuell hjälp. Provet skickas inte in ofullständigt.');
    if(deferVideos&&all.some(s=>s.video)){for(const f of frames)if(f.result.video&&!f.result.video.ended)await this.act(f,'pauseVideo');return 'deferred-video';}
    if(all.some(s=>s.score===100)){this.report('Sales Coach visar 100 procent på kunskapstestet.');return 'passed';}
    const result=frames.find(f=>f.result.score!=null&&f.result.score<100);
