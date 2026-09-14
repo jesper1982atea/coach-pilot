@@ -1,3 +1,4 @@
+import {reviewAnswer} from './answer-review.js';
 import {emptyLedger,updateLedger,exhausted} from './ledger.js';
 import {captionFrame} from './captions.js';
 import {trackVideo} from './run-progress.js';
@@ -194,6 +195,7 @@ export class Autopilot {
  rememberSubmission(state,ids){const key=this.testKey(state);this.lastSubmissions.set(new URL(this.expectedURL).pathname,{key,state,ids});this.submitted.add(key);}
  failedSubmission(state){return this.lastSubmissions.get(new URL(this.expectedURL).pathname)||{key:this.testKey(state),state,ids:state.options.filter(o=>o.selected).map(o=>o.id)};}
  beginRetry(key){const path=new URL(this.expectedURL).pathname,count=this.retryCounts.get(path)||0;if(count>=this.maxTestAttempts-1)throw new Error('Gränsen på '+this.maxTestAttempts+' provförsök är nådd. Momentet sparas för uppföljning.');this.retryCounts.set(path,count+1);this.submitted.delete(key);const previous=this.lastSubmissions.get(path);if(previous)this.submitted.delete(previous.key);this.retrying.set(path,0);}
+ async reviewAnswer(state,context,question){return reviewAnswer({state,context,question,native:p=>this.native(p),guard:()=>this.guard(),report:this.report,validate:validateAnswer});}
  async solve(frame,revised=0){
   const s=frame.result;if(s.groups>1)return this.solveTest(frame);if(s.freeText||!s.prompt||s.options.length<2||s.options.length>12||s.options.some(o=>!o.text))throw new Error('Den här frågetypen behöver granskas manuellt.');
   const key=this.testKey(s);if(this.submitted.has(key))throw new Error('Samma fråga visas efter inskickning. Kontrollera återkopplingen.');
@@ -204,8 +206,7 @@ export class Autopilot {
   const history=(detail?'\nSales Coach återkoppling för frågan: '+detail:'')+(previous.length?'\nTidigare svar '+previous.map(a=>(a.choices||a.ids).join(' + ')+' gav '+(a.score==null?'underkänt resultat':a.score+' %')).join('; ')+'. Granska frågan på nytt mot källan och upprepa inte ett underkänt svar.':'');
   const question=s.prompt+'\n'+s.options.map(o=>o.id+'. '+o.text).join('\n')+'\n'+(s.multi?'Flera alternativ kan vara rätt.':'Exakt ett alternativ ska väljas.')+history+(revised?'\nFörra AI-analysen upprepade en underkänd svarskombination. Kontrollera varje alternativ på nytt och korrigera slutsatsen utifrån underlaget och återkopplingen.':'');
   if(question.length>2000)throw new Error('Frågan är för lång för den lokala bryggan.');
-  const reply=await this.native({action:'choose',context,question});await this.guard();if(!reply.ok)throw new Error(reply.error||reply.message||'AI-anropet misslyckades.');
-  const answer=validateAnswer(reply.text,s,context);this.report('AI föreslår '+answer.ids.join(', ')+': '+answer.reason);
+  const answer=await this.reviewAnswer(s,context,question);this.report('AI-granskning godkänd för alternativen '+answer.ids.join(', '));
   if(previous.some(a=>(a.signature?a.signature===this.answerSignature(s,answer.ids):JSON.stringify(a.ids)===JSON.stringify(answer.ids)))){if(revised<this.maxAnswerAnalyses-1){this.report('AI upprepade ett felaktigt svar. Begär en fördjupad analys före inlämning.');return this.solve(frame,revised+1);}throw new Error('Apple Intelligence upprepade ett redan underkänt svar efter fördjupad analys. Inget nytt svar skickades in.');}
   let fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades medan AI arbetade.');
   for(const option of s.options){const selected=answer.ids.includes(option.id);if(fresh.result.options.find(o=>o.id===option.id)?.selected!==selected){await this.act(fresh,'select',{id:option.id,text:option.text,selected});fresh=(await this.frames()).find(f=>f.frameId===frame.frameId);if(!fresh||fresh.result.fingerprint!==s.fingerprint)throw new Error('Frågan ändrades när svar valdes.');}}
@@ -262,9 +263,7 @@ export class Autopilot {
    if(question.length>1900)throw new Error('Frågan är för lång för den lokala bryggan.');
    let answer,lastError;
    for(let attempt=0;attempt<2;attempt++){
-    const reply=await this.native({action:'choose',context,optionCount:local.options.length,requiredCount:q.requiredCount,question:question+(attempt?'\nAnvänd endast de listade numren. Kopiera citatet exakt ur underlaget.':'')});await this.guard();
-    if(!reply.ok)throw new Error(reply.error||'AI-anropet misslyckades.');
-    try{answer=validateAnswer(reply.text,local,context);break;}catch(e){lastError=e;this.report('Fråga '+(index+1)+': '+e.message+' [antal='+q.requiredCount+', alternativ='+local.options.length+', AI='+String(reply.text).slice(0,500)+']'+(attempt?'':' Försöker en gång till med förtydligat format.'));}
+    try{answer=await this.reviewAnswer(local,context,question);break;}catch(e){lastError=e;await this.guard();this.report('Fråga '+(index+1)+': '+e.message+(attempt?'':' Gör en ny granskning.'));}
    }
    if(!answer)throw lastError;
    answers.push({...answer,ids:answer.ids.map(id=>q.options[id-1].id)});

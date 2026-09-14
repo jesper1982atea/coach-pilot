@@ -67,3 +67,7 @@ Ofärdiga moment sparas lokalt i Edge mellan körningar med status, orsak, länk
 Från 0.9.0 körs stödda flervalsprov automatiskt. Alla frågor måste ha giltiga AI-svar med källstöd innan några alternativ väljs. Alternativens innehåll används för att känna igen gamla felaktiga svar även efter omsortering. Vid saknat underlag eller en upprepad underkänd kombination sparas momentet för uppföljning och kön fortsätter. Tidigare **Besvara provet**-poster återupptas automatiskt. Inga fasta facit används och godkänt resultat kan inte garanteras.
 
 Eventkurser väntar några sekunder på Sales Coach besked innan de klassificeras. Text om att kursuppgifterna kräver en eventinbjudan sparas direkt som **Åtkomst saknas**. Vanliga lässidor utan XP eller success får en kort registreringskontroll i stället för sex långa omgångar, vilket minskar tiden då körningen ser ut att ha fastnat.
+
+## Svarskontroll från 0.12.0
+
+Varje alternativ bedöms separat med källstöd. Därefter kontrollerar en ny lokal modellsession hela svaret. Oenighet, osäkerhet eller fel antal val stoppar inlämningen. Detta kräver fler AI-anrop. Kontrollerna verifierar källornas existens och att modellbedömningarna stämmer överens, men bevisar inte att tolkningen är rätt. Verklig svarskvalitet behöver mätas på kursproven.
